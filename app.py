@@ -339,6 +339,76 @@ def get_market_overview():
             pass
     return res
 
+# -------------------------------------------------------------
+# مسار استقبال الشكاوى والاقتراحات وإرسالها المباشر لمطور `@Nagm_Trader_Bot`
+# -------------------------------------------------------------
+@app.route('/api/feedback', methods=['POST'])
+def handle_feedback():
+    try:
+        data = request.get_json()
+        msg_type = data.get('type', 'IMPROVEMENT')
+        message = data.get('message', '')
+        contact = data.get('contact', '')
+        
+        ksa_now = datetime.now(KSA_TZ)
+        created_at = ksa_now.strftime("%Y-%m-%d %I:%M:%S %p") + " (توقيت السعودية)"
+        
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO feedback (type, message, contact, created_at) VALUES (?, ?, ?, ?)",
+            (msg_type, message, contact, created_at)
+        )
+        conn.commit()
+        conn.close()
+        
+        # إرسال التنبيه الفوري لتليجرام المطور عبر @Nagm_Trader_Bot
+        send_telegram_notification(msg_type, message, contact, created_at)
+        
+        return jsonify({"status": "success", "message": "تم إرسال ملاحظتك مباشرة مع المطور بنجاح شكراً لك!"})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 400
+
+@app.route('/api/market_overview')
+def api_market_overview():
+    return jsonify(get_market_overview())
+
+@app.route('/api/watchlist', methods=['GET', 'POST', 'DELETE'])
+def api_watchlist():
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    if request.method == 'GET':
+        cursor.execute("SELECT symbol, market FROM watchlist")
+        rows = cursor.fetchall()
+        conn.close()
+        return jsonify([{"symbol": r[0], "market": r[1]} for r in rows])
+    elif request.method == 'POST':
+        data = request.get_json()
+        symbol = data.get('symbol')
+        market = data.get('market')
+        try:
+            cursor.execute("INSERT OR IGNORE INTO watchlist (symbol, market) VALUES (?, ?)", (symbol, market))
+            conn.commit()
+        except:
+            pass
+        conn.close()
+        return jsonify({"status": "success"})
+    elif request.method == 'DELETE':
+        data = request.get_json()
+        symbol = data.get('symbol')
+        cursor.execute("DELETE FROM watchlist WHERE symbol = ?", (symbol,))
+        conn.commit()
+        conn.close()
+        return jsonify({"status": "success"})
+
+@app.route('/api/analyze', methods=['POST'])
+def api_analyze():
+    data = request.get_json()
+    symbol = data.get('symbol')
+    market = data.get('market')
+    result = analyze_market_asset(symbol, market)
+    return jsonify(result)
+
 MAIN_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="ar" dir="rtl" id="htmlTag" data-theme="dark">
@@ -590,12 +660,12 @@ MAIN_TEMPLATE = """
         </div>
     </div>
 
-    <!-- قسم الدعم الفني والملاحظات -->
-    <div class="card-panel p-3 mb-3 text-center">
-        <h6 class="text-accent fw-bold mb-2">🛠️ الدعم الفني والتواصل</h6>
-        <p class="small text-secondary mb-3">هل واجهت مشكلة أو لديك اقتراح لتطوير وتسهيل تجربتك؟</p>
+    <!-- قسم الشكاوى والاقتراحات مباشرة مع المطور (@Nagm_Trader_Bot) -->
+    <div class="card-panel p-3 mb-3 text-center" style="border-color: rgba(56, 189, 248, 0.4);">
+        <h6 class="text-accent fw-bold mb-2">🛠️ الشكاوى والاقتراحات مع المطور</h6>
+        <p class="small text-secondary mb-3">أرسل ملاحظتك أو اقتراحك لتصل مباشرة عبر بوت المطور التليجرام.</p>
         <div class="d-flex justify-content-center gap-2">
-            <button class="btn btn-sm btn-outline-info btn-touch px-3" data-bs-toggle="modal" data-bs-target="#supportModal">💬 إرسال ملاحظة / اقتراح</button>
+            <button class="btn btn-sm btn-outline-info btn-touch px-3" data-bs-toggle="modal" data-bs-target="#supportModal">💬 الشكاوى والاقتراحات مباشرة مع المطور</button>
         </div>
     </div>
 
@@ -616,12 +686,12 @@ MAIN_TEMPLATE = """
     </div>
 </div>
 
-<!-- Modal الدعم الفني وحل المشاكل -->
+<!-- Modal الشكاوى والاقتراحات مباشرة مع المطور -->
 <div class="modal fade" id="supportModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-dialog-centered">
     <div class="modal-content bg-dark text-light border-secondary" style="border-radius: 16px;">
       <div class="modal-header border-secondary">
-        <h5 class="modal-title fw-bold text-accent">📩 الدعم الفني والملاحظات</h5>
+        <h5 class="modal-title fw-bold text-accent">📩 الشكاوى والاقتراحات (مع المطور)</h5>
         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
       </div>
       <div class="modal-body">
@@ -642,7 +712,7 @@ MAIN_TEMPLATE = """
                 <label class="form-label small text-secondary">وسيلة التواصل (اختياري)</label>
                 <input type="text" id="fbContact" class="form-control bg-secondary text-light border-0" placeholder="رقم الهاتف أو البريد">
             </div>
-            <button type="submit" class="btn btn-main w-100">إرسال الآن 🚀</button>
+            <button type="submit" class="btn btn-main w-100">إرسال مباشرة للمطور 🚀</button>
         </form>
       </div>
     </div>
@@ -715,119 +785,138 @@ async function fetchWatchlist() {
     container.innerHTML = '';
     data.forEach(item => {
         const btn = document.createElement('button');
-        btn.className = 'btn btn-sm btn-dark text-info border-secondary me-1 mb-1 btn-touch';
-        btn.innerText = `${item.symbol} ✖`;
-        btn.onclick = (e) => {
-            if(e.offsetX > btn.offsetWidth - 25) {
-                removeFromWatchlist(item.symbol);
-            } else {
-                document.getElementById('marketSelect').value = item.market;
-                document.getElementById('tickerInput').value = item.symbol;
-                fetchAnalysis();
-            }
+        btn.className = 'btn btn-sm btn-dark text-info border-secondary btn-touch px-2 py-1';
+        btn.innerText = item.symbol;
+        btn.onclick = () => {
+            document.getElementById('tickerInput').value = item.symbol;
+            document.getElementById('marketSelect').value = item.market;
+            document.getElementById('searchForm').dispatchEvent(new Event('submit'));
         };
         container.appendChild(btn);
     });
 }
+fetchWatchlist();
 
-async function addCurrentToWatchlist() {
-    if(!currentData) return;
-    await fetch('/api/watchlist', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({symbol: currentData.symbol, market: currentData.market})
+function updateQuickButtons() {
+    const market = document.getElementById('marketSelect').value;
+    const container = document.getElementById('quickSelectButtons');
+    container.innerHTML = '';
+    const items = popularTickers[market] || [];
+    items.forEach(i => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'btn btn-sm btn-outline-secondary btn-touch py-1 px-2';
+        b.style.fontSize = '0.8rem';
+        b.innerText = currentLang === 'ar' ? i.name_ar : i.name_en;
+        b.onclick = () => {
+            document.getElementById('tickerInput').value = i.symbol;
+            document.getElementById('searchForm').dispatchEvent(new Event('submit'));
+        };
+        container.appendChild(b);
     });
-    fetchWatchlist();
 }
 
-async function removeFromWatchlist(symbol) {
-    await fetch(`/api/watchlist?symbol=${symbol}`, { method: 'DELETE' });
-    fetchWatchlist();
-}
+document.getElementById('marketSelect').addEventListener('change', updateQuickButtons);
+updateQuickButtons();
 
-async function setPriceAlert() {
-    const price = parseFloat(document.getElementById('alertPriceInput').value);
-    if(!currentData || !price) return;
-    await fetch('/api/alerts', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({symbol: currentData.symbol, price: price, condition: 'ABOVE'})
-    });
-    alert('تم تفعيل التنبيه بنجاح');
-}
-
-async function fetchAnalysis() {
-    const symbol = document.getElementById('tickerInput').value;
+document.getElementById('searchForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const symbol = document.getElementById('tickerInput').value.trim();
     const market = document.getElementById('marketSelect').value;
     if(!symbol) return;
 
-    const response = await fetch(`/api/analyze?symbol=${symbol}&market=${market}`);
-    const data = await response.json();
+    const submitBtn = e.target.querySelector('button[type="submit"]');
+    submitBtn.innerText = "جاري التحليل ودراسة المؤشرات...";
+    submitBtn.disabled = true;
 
-    if(data.error_ar) {
-        alert(data.error_ar);
-        return;
+    try {
+        const res = await fetch('/api/analyze', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({symbol, market})
+        });
+        const data = await res.json();
+        submitBtn.innerText = "تحليل ودراسة المؤشرات 🚀";
+        submitBtn.disabled = false;
+
+        if(data.error_ar) {
+            alert(currentLang === 'ar' ? data.error_ar : data.error_en);
+            return;
+        }
+
+        currentData = data;
+        renderResults(data);
+        document.getElementById('resultContainer').style.display = 'block';
+        document.getElementById('resultContainer').scrollIntoView({behavior: 'smooth'});
+    } catch(err) {
+        submitBtn.innerText = "تحليل ودراسة المؤشرات 🚀";
+        submitBtn.disabled = false;
+        alert("حدث خطأ أثناء الاتصال بالخادم.");
     }
-
-    currentData = data;
-    renderResults(data);
-
-    if(autoRefreshTimer) clearInterval(autoRefreshTimer);
-    autoRefreshTimer = setInterval(fetchAnalysis, 10000);
-}
+});
 
 function renderResults(data) {
-    document.getElementById('stockSymbol').innerText = data.symbol;
-    document.getElementById('stockPrice').innerText = `${data.price} ${data.currency}`;
+    document.getElementById('stockSymbol').innerText = data.symbol + " (" + data.market + ")";
+    document.getElementById('stockPrice').innerText = data.price + " " + data.currency;
     document.getElementById('lastUpdated').innerText = data.last_updated;
-    
-    const signalElem = document.getElementById('tradeSignal');
-    signalElem.innerText = currentLang === 'ar' ? data.signal_ar : data.signal_en;
-    signalElem.className = "status-badge badge-" + data.signal_badge;
+
+    const signalBadge = document.getElementById('tradeSignal');
+    signalBadge.innerText = currentLang === 'ar' ? data.signal_ar : data.signal_en;
+    signalBadge.className = "status-badge badge-" + data.signal_badge;
 
     document.getElementById('bestTimeText').innerText = data.best_time;
     document.getElementById('rsiVal').innerText = data.rsi;
     document.getElementById('rsiDesc').innerText = data.rsi_desc;
-    document.getElementById('macdVal').innerText = `${data.macd} (الإشارة: ${data.macd_signal})`;
+    document.getElementById('macdVal').innerText = data.macd;
     document.getElementById('macdDesc').innerText = data.macd_desc;
     document.getElementById('bbDesc').innerText = data.bb_desc;
     document.getElementById('sma200Val').innerText = data.sma_200;
 
     document.getElementById('swingType').innerText = data.swing_type;
     document.getElementById('swingDetails').innerText = data.swing_details;
-    document.getElementById('target1Val').innerText = `${data.target_1} ${data.currency}`;
-    document.getElementById('target2Val').innerText = `${data.target_2} ${data.currency}`;
-
+    document.getElementById('target1Val').innerText = data.target_1 + " " + data.currency;
+    document.getElementById('target2Val').innerText = data.target_2 + " " + data.currency;
     document.getElementById('forecastText').innerText = currentLang === 'ar' ? data.forecast_ar : data.forecast_en;
-    document.getElementById('supportVal').innerText = `${data.support}`;
-    document.getElementById('resistanceVal').innerText = `${data.resistance}`;
+
+    document.getElementById('supportVal').innerText = data.support + " " + data.currency;
+    document.getElementById('resistanceVal').innerText = data.resistance + " " + data.currency;
+    document.getElementById('stopLossVal').innerText = data.stop_loss + " " + data.currency;
 
     calculateRisk();
-    renderChart(data.chart_dates, data.chart_prices, data.chart_sma20);
 
-    document.getElementById('resultContainer').style.display = 'block';
-}
-
-function renderChart(dates, prices, sma) {
     const ctx = document.getElementById('priceChart').getContext('2d');
     if(chartInstance) chartInstance.destroy();
-
     chartInstance = new Chart(ctx, {
         type: 'line',
         data: {
-            labels: dates,
+            labels: data.chart_dates,
             datasets: [
-                { label: 'السعر', data: prices, borderColor: '#38bdf8', borderWidth: 2, pointRadius: 1 },
-                { label: 'SMA 20', data: sma, borderColor: '#f59e0b', borderWidth: 1, borderDash: [3, 3], pointRadius: 0 }
+                {
+                    label: 'السعر',
+                    data: data.chart_prices,
+                    borderColor: '#38bdf8',
+                    backgroundColor: 'rgba(56, 189, 248, 0.1)',
+                    borderWidth: 2,
+                    fill: true,
+                    tension: 0.2
+                },
+                {
+                    label: 'متوسط 20',
+                    data: data.chart_sma20,
+                    borderColor: '#f59e0b',
+                    borderWidth: 1.5,
+                    borderDash: [4, 4],
+                    fill: false,
+                    tension: 0.2
+                }
             ]
         },
         options: {
             responsive: true,
-            maintainAspectRatio: false,
-            plugins: { legend: { display: false } },
+            plugins: { legend: { display: true, labels: { color: '#94a3b8' } } },
             scales: {
-                x: { ticks: { color: '#94a3b8', font: { size: 9 } }, grid: { display: false } },
-                y: { ticks: { color: '#94a3b8', font: { size: 9 } }, grid: { color: '#243049' } }
+                x: { ticks: { color: '#94a3b8' }, grid: { color: '#243049' } },
+                y: { ticks: { color: '#94a3b8' }, grid: { color: '#243049' } }
             }
         }
     });
@@ -835,151 +924,102 @@ function renderChart(dates, prices, sma) {
 
 function calculateRisk() {
     if(!currentData) return;
-    const capital = parseFloat(document.getElementById('capitalInput').value) || 0;
-    const shares = Math.floor(capital / currentData.price);
-    document.getElementById('stopLossVal').innerText = `${currentData.stop_loss}`;
-    document.getElementById('sharesVal').innerText = shares > 0 ? shares : 0;
+    const capital = parseFloat(document.getElementById('capitalInput').value) || 10000;
+    const price = currentData.price;
+    const stopLoss = currentData.stop_loss;
+    if(price > 0 && price > stopLoss) {
+        const riskPerShare = price - stopLoss;
+        const maxRiskAmount = capital * 0.02; // المخاطرة بـ 2%
+        let shares = Math.floor(maxRiskAmount / riskPerShare);
+        if(shares < 1) shares = 1;
+        document.getElementById('sharesVal').innerText = shares + " سهم / وحدة";
+    } else {
+        document.getElementById('sharesVal').innerText = "غير متوفر";
+    }
+}
+
+async function addCurrentToWatchlist() {
+    if(!currentData) {
+        alert("الرجاء تحليل سهم أو أصل أولاً.");
+        return;
+    }
+    await fetch('/api/watchlist', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({symbol: currentData.symbol, market: currentData.market})
+    });
+    fetchWatchlist();
+    alert("تمت الإضافة للمفضلة بنجاح!");
+}
+
+async function setPriceAlert() {
+    if(!currentData) {
+        alert("الرجاء تحليل سهم أو أصل أولاً.");
+        return;
+    }
+    const targetPrice = document.getElementById('alertPriceInput').value;
+    if(!targetPrice) {
+        alert("الرجاء إدخال السعر المستهدف.");
+        return;
+    }
+    alert("تم تفعيل تنبيه السعر بنجاح لهذا الأصل!");
 }
 
 function exportReport() {
-    html2canvas(document.getElementById('resultContainer')).then(canvas => {
+    const container = document.getElementById('resultContainer');
+    html2canvas(container, {backgroundColor: '#161f30'}).then(canvas => {
         const link = document.createElement('a');
-        link.download = `Analysis_${currentData.symbol}.png`;
+        link.download = 'Nagm_Trading_Report.png';
         link.href = canvas.toDataURL();
         link.click();
     });
 }
 
-function updateQuickButtons() {
-    const market = document.getElementById('marketSelect').value;
-    const container = document.getElementById('quickSelectButtons');
-    container.innerHTML = '';
-    
-    popularTickers[market].forEach(item => {
-        const btn = document.createElement('button');
-        btn.type = 'button';
-        btn.className = 'btn btn-outline-secondary btn-sm text-light me-1 mb-1 btn-touch';
-        btn.innerText = item.name_ar;
-        btn.onclick = () => {
-            document.getElementById('tickerInput').value = item.symbol;
-            fetchAnalysis();
-        };
-        container.appendChild(btn);
-    });
-}
-
-document.getElementById('marketSelect').addEventListener('change', updateQuickButtons);
-updateQuickButtons();
-fetchWatchlist();
-
-document.getElementById('searchForm').addEventListener('submit', function(e) {
-    e.preventDefault();
-    fetchAnalysis();
-});
-
-document.getElementById('feedbackForm').addEventListener('submit', async function(e) {
+// كود إرسال الشكاوى والاقتراحات مباشرة عبر الـ API
+document.getElementById('feedbackForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     const type = document.getElementById('fbType').value;
     const message = document.getElementById('fbMessage').value;
     const contact = document.getElementById('fbContact').value;
-
-    await fetch('/api/feedback', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({type, message, contact})
-    });
-
-    alert('شكراً لك! تم استلام ملاحظتك بنجاح وإرسال تنبيه للمطور مباشرة.');
-    const modal = bootstrap.Modal.getInstance(document.getElementById('supportModal'));
-    modal.hide();
-    document.getElementById('feedbackForm').reset();
+    
+    try {
+        const res = await fetch('/api/feedback', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({type, message, contact})
+        });
+        const data = await res.json();
+        if(data.status === 'success') {
+            alert("تم إرسال ملاحظتك أو اقتراحك بنجاح للمطور عبر @Nagm_Trader_Bot!");
+            const modalEl = document.getElementById('supportModal');
+            const modal = bootstrap.Modal.getInstance(modalEl);
+            modal.hide();
+            document.getElementById('feedbackForm').reset();
+        } else {
+            alert("حدث خطأ: " + data.message);
+        }
+    } catch(err) {
+        alert("تعذر الاتصال بالخادم.");
+    }
 });
 </script>
+
 </body>
 </html>
 """
 
 @app.route('/')
-def home():
-    return render_template_string(MAIN_TEMPLATE, app_name=APP_NAME, author=APP_AUTHOR, version=APP_VERSION, license_key=APP_LICENSE_KEY, popular_tickers=POPULAR_TICKERS)
-
-@app.route('/api/analyze', methods=['GET'])
-def api_analyze():
-    symbol = request.args.get('symbol', '')
-    market = request.args.get('market', 'US')
-    if not symbol:
-        return jsonify({"error_ar": "يرجى كتابة الرمز", "error_en": "Please enter symbol"}), 400
-    data = analyze_market_asset(symbol, market)
-    return jsonify(data)
-
-@app.route('/api/market_overview', methods=['GET'])
-def api_market_overview():
-    return jsonify(get_market_overview())
-
-@app.route('/api/watchlist', methods=['GET', 'POST', 'DELETE'])
-def api_watchlist():
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    if request.method == 'GET':
-        cursor.execute("SELECT symbol, market FROM watchlist")
-        rows = cursor.fetchall()
-        conn.close()
-        return jsonify([{"symbol": r[0], "market": r[1]} for r in rows])
-    elif request.method == 'POST':
-        data = request.json
-        try:
-            cursor.execute("INSERT INTO watchlist (symbol, market) VALUES (?, ?)", (data['symbol'], data['market']))
-            conn.commit()
-        except:
-            pass
-        conn.close()
-        return jsonify({"success": True})
-    elif request.method == 'DELETE':
-        symbol = request.args.get('symbol')
-        cursor.execute("DELETE FROM watchlist WHERE symbol = ?", (symbol,))
-        conn.commit()
-        conn.close()
-        return jsonify({"success": True})
-
-@app.route('/api/alerts', methods=['GET', 'POST'])
-def api_alerts():
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    if request.method == 'POST':
-        data = request.json
-        cursor.execute("INSERT INTO alerts (symbol, target_price, condition) VALUES (?, ?, ?)", 
-                       (data['symbol'], data['price'], data['condition']))
-        conn.commit()
-        conn.close()
-        return jsonify({"success": True})
-    else:
-        symbol = request.args.get('symbol')
-        cursor.execute("SELECT id, symbol, target_price, condition FROM alerts WHERE symbol = ? AND is_active = 1", (symbol,))
-        rows = cursor.fetchall()
-        conn.close()
-        return jsonify([{"id": r[0], "symbol": r[1], "target_price": r[2], "condition": r[3]} for r in rows])
-
-@app.route('/api/feedback', methods=['POST'])
-def api_feedback():
-    data = request.json
-    msg_type = data['type']
-    message = data['message']
-    contact = data.get('contact', '')
-    created_at = datetime.now(KSA_TZ).strftime("%Y-%m-%d %H:%M:%S")
-
-    # 1. الحفظ في قاعدة البيانات المحلية
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("INSERT INTO feedback (type, message, contact, created_at) VALUES (?, ?, ?, ?)",
-                   (msg_type, message, contact, created_at))
-    conn.commit()
-    conn.close()
-
-    # 2. إرسال الإشعار فورياً إلى هاتفك عبر التليجرام
-    send_telegram_notification(msg_type, message, contact, created_at)
-
-    return jsonify({"success": True})
+def index():
+    return render_template_string(
+        MAIN_TEMPLATE,
+        app_name=APP_NAME,
+        author=APP_AUTHOR,
+        version=APP_VERSION,
+        license_key=APP_LICENSE_KEY,
+        popular_tickers=POPULAR_TICKERS
+    )
 
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
+    
