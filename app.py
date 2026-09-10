@@ -1,21 +1,62 @@
 import os
 import time
 import sqlite3
+import requests
 import yfinance as yf
 import pandas as pd
 import numpy as np
 from datetime import datetime
-import pytz  # لضبط توقيت المملكة العربية السعودية
+import pytz
 from flask import Flask, render_template_string, request, jsonify
 
 APP_AUTHOR = "حقوق الطبع والتطوير محفوظة لـ: نجم- عبدالله علي هادي عاتي"
-APP_VERSION = "v12.2.0 (KSA Timezone & Prominent Rights Edition)"
+APP_VERSION = "v18.0.0 (Alpha Vantage & Secure License Edition)"
 APP_NAME = "منصة التداول والتحليل الذكي العالمي"
+APP_LICENSE_KEY = "0O3HPSMIK9VZDTPM"  # الرمز المعرف / الترخيص الخاص بك
+
+# -------------------------------------------------------------
+# إعدادات بوت التليجرام (تمت إضافة التوكن والمعرف الخاص بك) ومفتاح Alpha Vantage API
+# -------------------------------------------------------------
+TELEGRAM_BOT_TOKEN = "8873564925:AAG3VLeyuiVPxHOB-_QC15FyIpI59k6Xq6k"
+TELEGRAM_CHAT_ID = "6930051528"
+ALPHAVANTAGE_API_KEY = os.environ.get("ALPHAVANTAGE_API_KEY", "ضع_مفتاح_AlphaVantage_هنا")
+
+def send_telegram_notification(msg_type, message, contact, created_at):
+    """دالة إرسال التنبيهات الفورية إلى تليجرام المطور"""
+    if not TELEGRAM_BOT_TOKEN or TELEGRAM_BOT_TOKEN == "ضع_توكن_البوت_هنا":
+        return
+
+    type_labels = {
+        "BUG": "🛠️ بلاغ عن مشكلة فنية",
+        "IMPROVEMENT": "💡 اقتراح تحسين",
+        "FEATURE": "🚀 طلب ميزة جديدة"
+    }
+    
+    label = type_labels.get(msg_type, "📩 ملاحظة جديدة")
+    
+    text = (
+        f"<b>{label}</b>\n\n"
+        f"<b>📝 التفاصيل:</b>\n{message}\n\n"
+        f"<b>👤 وسيلة التواصل:</b> {contact if contact else 'غير محدد'}\n"
+        f"<b>⏰ التوقيت:</b> {created_at}\n"
+        f"<b>🔑 معرف الترخيص:</b> <code>{APP_LICENSE_KEY}</code>\n"
+        f"-----------------------------\n"
+        f"<i>تم الإرسال من: {APP_NAME}</i>"
+    )
+    
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": text,
+        "parse_mode": "HTML"
+    }
+    try:
+        requests.post(url, json=payload, timeout=5)
+    except Exception as e:
+        print(f"Telegram Notification Error: {e}")
 
 app = Flask(__name__)
 DB_PATH = "trading_platform.db"
-
-# تحديد التوقيت المحلي لـ المملكة العربية السعودية
 KSA_TZ = pytz.timezone('Asia/Riyadh')
 
 def init_db():
@@ -35,6 +76,15 @@ def init_db():
             target_price REAL,
             condition TEXT,
             is_active INTEGER DEFAULT 1
+        )
+    ''')
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS feedback (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            type TEXT,
+            message TEXT,
+            contact TEXT,
+            created_at TEXT
         )
     ''')
     conn.commit()
@@ -85,6 +135,46 @@ POPULAR_TICKERS = {
     ]
 }
 
+def fetch_alpha_vantage_data(symbol, market):
+    """جلب البيانات باستخدام Alpha Vantage API كبديل دقيق وداعم للمجتمع المالي"""
+    if not ALPHAVANTAGE_API_KEY or ALPHAVANTAGE_API_KEY == "ضع_مفتاح_AlphaVantage_هنا":
+        return None
+    
+    try:
+        if market == 'CRYPTO':
+            url = f"https://www.alphavantage.co/query?function=DIGITAL_CURRENCY_DAILY&symbol={symbol.split('-')[0]}&market=USD&apikey={ALPHAVANTAGE_API_KEY}"
+            r = requests.get(url, timeout=5).json()
+            time_series = r.get("Time Series (Digital Currency Daily)", {})
+            if not time_series:
+                return None
+            df_data = []
+            for date, values in list(time_series.items())[:200]:
+                df_data.append({
+                    'Date': pd.to_datetime(date),
+                    'Close': float(values.get('4. close', 0)),
+                    'High': float(values.get('2. high', 0)),
+                    'Low': float(values.get('3. low', 0)),
+                })
+            df = pd.DataFrame(df_data).sort_values('Date').set_index('Date')
+        else:
+            url = f"https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol={symbol}&outputsize=compact&apikey={ALPHAVANTAGE_API_KEY}"
+            r = requests.get(url, timeout=5).json()
+            time_series = r.get("Time Series (Daily)", {})
+            if not time_series:
+                return None
+            df_data = []
+            for date, values in list(time_series.items())[:200]:
+                df_data.append({
+                    'Date': pd.to_datetime(date),
+                    'Close': float(values.get('4. close', 0)),
+                    'High': float(values.get('2. high', 0)),
+                    'Low': float(values.get('3. low', 0)),
+                })
+            df = pd.DataFrame(df_data).sort_values('Date').set_index('Date')
+        return df
+    except Exception:
+        return None
+
 def analyze_market_asset(ticker_symbol, market):
     cache_key = f"{ticker_symbol}_{market}"
     now = time.time()
@@ -100,8 +190,10 @@ def analyze_market_asset(ticker_symbol, market):
         elif market == 'GOLD' and symbol not in ['GC=F', 'SI=F', 'XAUUSD=X']:
             symbol = "GC=F"
 
-        asset = yf.Ticker(symbol)
-        df = asset.history(period="1y")
+        df = fetch_alpha_vantage_data(symbol, market)
+        if df is None or df.empty:
+            asset = yf.Ticker(symbol)
+            df = asset.history(period="1y")
 
         if df.empty:
             return {"error_ar": "لم يتم العثور على بيانات، تأكد من الرمز.", "error_en": "No data found, check symbol."}
@@ -125,32 +217,45 @@ def analyze_market_asset(ticker_symbol, market):
         df['MACD'] = exp1 - exp2
         df['Signal_Line'] = df['MACD'].ewm(span=9, adjust=False).mean()
 
+        latest_price = round(float(df['Close'].iloc[-1]), 2)
+        latest_rsi = round(float(df['RSI'].iloc[-1]), 2) if not np.isnan(df['RSI'].iloc[-1]) else 50.0
+        latest_macd = round(float(df['MACD'].iloc[-1]), 2) if not np.isnan(df['MACD'].iloc[-1]) else 0.0
+        latest_signal = round(float(df['Signal_Line'].iloc[-1]), 2) if not np.isnan(df['Signal_Line'].iloc[-1]) else 0.0
+        bb_upper = round(float(df['BB_Upper'].iloc[-1]), 2) if not np.isnan(df['BB_Upper'].iloc[-1]) else latest_price * 1.05
+        bb_lower = round(float(df['BB_Lower'].iloc[-1]), 2) if not np.isnan(df['BB_Lower'].iloc[-1]) else latest_price * 0.95
+        sma_200 = round(float(df['SMA_200'].iloc[-1]), 2) if not np.isnan(df['SMA_200'].iloc[-1]) else "N/A"
+
         support = round(float(df['Low'].tail(30).min()), 2)
         resistance = round(float(df['High'].tail(30).max()), 2)
-        latest_price = round(float(df['Close'].iloc[-1]), 2)
-        latest_rsi = round(float(df['RSI'].iloc[-1]), 2)
-        latest_macd = round(float(df['MACD'].iloc[-1]), 2)
-        latest_signal = round(float(df['Signal_Line'].iloc[-1]), 2)
-        sma_200 = round(float(df['SMA_200'].iloc[-1]), 2) if not np.isnan(df['SMA_200'].iloc[-1]) else "N/A"
 
         currency = "SAR" if market == 'SA' else ("USD" if market in ['US', 'CRYPTO'] else "USD/Oz")
         stop_loss = round(latest_price * 0.95, 2)
         target_1 = round(latest_price * 1.06, 2)
         target_2 = round(latest_price * 1.12, 2)
 
-        swing_type = "محايد"
-        swing_details = "السوق يتداول في نطاق عرضي، يُنصح بالانتظار وتحديد نقطة اختراق."
-        best_time = "انتظار تأكيد الاتجاه"
+        rsi_desc = "تشبع شرائي (قمة متوقعة)" if latest_rsi > 70 else ("تشبع بيعي (فرصة تجميع)" if latest_rsi < 35 else "نطاق متوازن")
+        macd_desc = "تقاطع إيجابي صاعد (إشارة دخول)" if latest_macd > latest_signal else "تقاطع سلبي هابط (إشارة خروج)"
+        bb_desc = "السعر بالقرب من الحد الأدنى (دعم)" if latest_price <= bb_lower * 1.02 else ("السعر بالقرب من الحد الأعلى (مقاومة)" if latest_price >= bb_upper * 0.98 else "تداول داخل النطاق الطبيعي")
 
-        if latest_rsi < 35 and latest_macd > latest_signal:
+        buy_score = 0
+        if latest_rsi < 40: buy_score += 1
+        if latest_macd > latest_signal: buy_score += 1
+        if latest_price <= bb_lower * 1.03: buy_score += 1
+
+        sell_score = 0
+        if latest_rsi > 65: sell_score += 1
+        if latest_macd < latest_signal: sell_score += 1
+        if latest_price >= bb_upper * 0.97: sell_score += 1
+
+        if buy_score >= 2:
             signal_ar, signal_en = "أفضل وقت للشراء (تجميع)", "Optimal Buy Zone"
             signal_badge = "buy"
-            forecast_ar = "توقعات بارتفاع القيمة وانعكاس الاتجاه للأعلى بناءً على المؤشرات الفنية."
+            forecast_ar = "توقعات بارتفاع القيمة وانعكاس الاتجاه للأعلى بناءً على توافق المؤشرات العالمية."
             forecast_en = "Bullish reversal expected soon."
             swing_type = "صفقة سوينج صاعدة (Long Swing)"
             swing_details = f"دخول آمن بالقرب من مستوى الدعم ({support}). الهدف الأول ({target_1}) والهدف الثاني ({target_2})."
             best_time = "الآن (شراء تدريجي مع الحفاظ على وقف الخسارة)"
-        elif latest_rsi > 70 or (latest_price >= resistance * 0.98 and latest_macd < latest_signal):
+        elif sell_score >= 2:
             signal_ar, signal_en = "أفضل وقت للبيع (جني أرباح)", "Optimal Sell Zone"
             signal_badge = "sell"
             forecast_ar = "توقعات بانخفاض مؤقت وتراجع في السعر بسبب وصول السهم لمناطق تشبع شرائي."
@@ -163,15 +268,17 @@ def analyze_market_asset(ticker_symbol, market):
             signal_badge = "hold"
             forecast_ar = "تذبذب واستقرار مسار السعر في نطاق عرضي."
             forecast_en = "Price consolidating in a neutral range."
+            swing_type = "محايد"
+            swing_details = "السوق يتداول في نطاق عرضي، يُنصح بالانتظار وتحديد نقطة اختراق."
+            best_time = "انتظار تأكيد الاتجاه"
 
         chart_df = df.tail(30).fillna(0)
         dates = [d.strftime('%m-%d') for d in chart_df.index]
         prices = [round(p, 2) for p in chart_df['Close'].tolist()]
-        sma20 = [round(p, 2) for p in chart_df['SMA_20'].tolist()]
+        sma20 = [round(p, 2) for p in chart_df['SMA_20'].tolist()] if 'SMA_20' in chart_df else prices
 
-        # الحصول على الوقت الحالي بتوقيت مكة المكرمة / السعودية
         ksa_now = datetime.now(KSA_TZ)
-        last_updated_ksa = ksa_now.strftime("%I:%M:%S %p") + " (بتوقيت السعودية)"
+        last_updated_ksa = ksa_now.strftime("%I:%M:%S %p") + " (توقيت السعودية)"
 
         result = {
             "symbol": symbol,
@@ -179,6 +286,13 @@ def analyze_market_asset(ticker_symbol, market):
             "price": latest_price,
             "currency": currency,
             "rsi": latest_rsi,
+            "rsi_desc": rsi_desc,
+            "macd": latest_macd,
+            "macd_signal": latest_signal,
+            "macd_desc": macd_desc,
+            "bb_upper": bb_upper,
+            "bb_lower": bb_lower,
+            "bb_desc": bb_desc,
             "support": support,
             "resistance": resistance,
             "stop_loss": stop_loss,
@@ -231,10 +345,9 @@ MAIN_TEMPLATE = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <title>{{ app_name }}</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://html2canvas.hertzen.com/dist/html2canvas.min.js"></script>
     <style>
@@ -268,7 +381,6 @@ MAIN_TEMPLATE = """
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; 
             padding-top: var(--sat);
             padding-bottom: calc(90px + var(--sab)); 
-            touch-action: manipulation;
         }
         .card-panel { background-color: var(--card-bg); border: 1px solid var(--border-color); border-radius: 16px; }
         .text-accent { color: var(--accent-color); }
@@ -283,43 +395,31 @@ MAIN_TEMPLATE = """
         .ticker { display: inline-block; animation: ticker 30s linear infinite; }
         @keyframes ticker { 0% { transform: translate3d(0, 0, 0); } 100% { transform: translate3d(-50%, 0, 0); } }
 
-        /* تصميم كرت حقوق الطبع الفخم والبارز */
-        .author-banner {
-            background: linear-gradient(135deg, rgba(56, 189, 248, 0.2), rgba(16, 185, 129, 0.2));
-            border: 2px solid var(--accent-color);
-            border-radius: 20px;
-            padding: 20px 15px;
-            margin-top: 25px;
-            box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4);
+        .author-banner-luxury {
             position: relative;
-            overflow: hidden;
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #0284c7 100%);
+            border: 1px solid rgba(56, 189, 248, 0.4);
+            border-radius: 20px;
+            padding: 22px 18px;
+            margin-top: 25px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+            text-align: center;
         }
-        .author-banner::before {
-            content: '';
-            position: absolute;
-            top: -50%;
-            left: -50%;
-            width: 200%;
-            height: 200%;
-            background: radial-gradient(circle, rgba(255,255,255,0.1) 0%, transparent 60%);
-            pointer-events: none;
-        }
-        .author-title {
-            font-size: 1.35rem;
+        .author-title-luxury {
+            font-size: 1.25rem;
             font-weight: 900;
             color: #ffffff;
-            text-shadow: 0 2px 4px rgba(0,0,0,0.5);
-            letter-spacing: 0.5px;
+            margin-top: 6px;
+            margin-bottom: 6px;
         }
-        .author-badge {
+        .author-badge-luxury {
             display: inline-block;
-            background-color: var(--accent-color);
-            color: #000;
-            font-weight: bold;
-            font-size: 0.8rem;
-            padding: 3px 12px;
-            border-radius: 12px;
-            margin-bottom: 8px;
+            background: linear-gradient(90deg, #38bdf8, #818cf8);
+            color: #0f172a;
+            font-weight: 800;
+            font-size: 0.75rem;
+            padding: 4px 14px;
+            border-radius: 20px;
         }
 
         .mobile-nav {
@@ -334,7 +434,6 @@ MAIN_TEMPLATE = """
             padding-top: 8px;
             padding-bottom: calc(8px + var(--sab));
             z-index: 1000;
-            backdrop-filter: blur(10px);
         }
         .mobile-nav button {
             background: none;
@@ -344,26 +443,10 @@ MAIN_TEMPLATE = """
             display: flex;
             flex-direction: column;
             align-items: center;
-            gap: 2px;
         }
         .mobile-nav button.active { color: var(--accent-color); font-weight: bold; }
         .btn-touch { min-height: 44px; border-radius: 10px; }
         .form-control, .form-select { min-height: 48px; font-size: 1rem; border-radius: 10px; }
-        
-        .pulse-dot {
-            height: 8px;
-            width: 8px;
-            background-color: #10b981;
-            border-radius: 50%;
-            display: inline-block;
-            box-shadow: 0 0 0 rgba(16, 185, 129, 0.4);
-            animation: pulse 1.5s infinite;
-        }
-        @keyframes pulse {
-            0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); }
-            70% { box-shadow: 0 0 0 6px rgba(16, 185, 129, 0); }
-            100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
-        }
     </style>
 </head>
 <body>
@@ -375,16 +458,16 @@ MAIN_TEMPLATE = """
 <div class="container py-3 px-3" style="max-width: 600px;">
     <div class="d-flex justify-content-between align-items-center mb-3">
         <div>
-            <h4 class="fw-bold text-accent m-0" id="appTitle">{{ app_name }}</h4>
-            <span class="small text-secondary"><span class="pulse-dot me-1"></span> تحديث آلي مباشر بتوقيت السعودية</span>
+            <h4 class="fw-bold text-accent m-0">{{ app_name }}</h4>
+            <span class="small text-secondary">تحليل المؤشرات العالمية بتوقيت السعودية</span>
         </div>
-        <button onclick="toggleTheme()" class="btn btn-sm btn-outline-secondary btn-touch px-3" id="themeBtn">🌙/☀️</button>
+        <button onclick="toggleTheme()" class="btn btn-sm btn-outline-secondary btn-touch px-3">🌙/☀️</button>
     </div>
 
     <div class="card-panel p-3 mb-3">
         <div class="d-flex justify-content-between align-items-center mb-2">
             <span class="small text-secondary fw-bold">⭐ المفضلة (Watchlist):</span>
-            <button onclick="addCurrentToWatchlist()" class="btn btn-sm btn-outline-info" id="btnAddFav">+ إضافة</button>
+            <button onclick="addCurrentToWatchlist()" class="btn btn-sm btn-outline-info">+ إضافة</button>
         </div>
         <div id="watchlistContainer" class="d-flex flex-wrap gap-2"></div>
     </div>
@@ -392,7 +475,7 @@ MAIN_TEMPLATE = """
     <div class="card-panel p-3 mb-3">
         <form id="searchForm">
             <div class="mb-2">
-                <label class="form-label text-secondary small mb-1" id="lblMarket">اختر السوق</label>
+                <label class="form-label text-secondary small mb-1">اختر السوق</label>
                 <select id="marketSelect" class="form-select bg-dark text-light border-secondary">
                     <option value="US">السوق الأمريكي (US)</option>
                     <option value="SA">السوق السعودي (TASI)</option>
@@ -402,7 +485,7 @@ MAIN_TEMPLATE = """
             </div>
 
             <div class="mb-3">
-                <label class="form-label text-secondary small mb-1" id="lblSymbol">رمز السهم / الأصل</label>
+                <label class="form-label text-secondary small mb-1">رمز السهم / الأصل</label>
                 <input type="text" id="tickerInput" class="form-control bg-dark text-light border-secondary" placeholder="AAPL, BTC, 2222, GC=F" required>
             </div>
 
@@ -410,7 +493,7 @@ MAIN_TEMPLATE = """
                 <div id="quickSelectButtons" class="d-flex flex-wrap gap-1"></div>
             </div>
 
-            <button type="submit" class="btn btn-main w-100 py-2" id="btnAnalyze">تحليل ودراسة الحالة 🚀</button>
+            <button type="submit" class="btn btn-main w-100 py-2">تحليل ودراسة المؤشرات 🚀</button>
         </form>
     </div>
 
@@ -431,12 +514,22 @@ MAIN_TEMPLATE = """
         </div>
 
         <div class="box-info mb-3">
-            <div class="text-accent fw-bold small mb-1">💡 التوقيت الأفضل للتداول:</div>
+            <div class="text-accent fw-bold small mb-1">💡 التوقيت الأفضل للتداول (أوقات البيع والشراء):</div>
             <div id="bestTimeText" class="small fw-bold text-warning"></div>
         </div>
 
         <div class="box-info mb-3">
-            <div class="text-accent fw-bold small mb-1">🎯 تحليل صفقات السوينج المتوقعة (Swing Trading):</div>
+            <div class="text-accent fw-bold small mb-2">📊 تفاصيل وتفسير المؤشرات العالمية:</div>
+            <ul class="list-unstyled mb-0 small text-light">
+                <li class="mb-1">🔹 <strong>مؤشر RSI:</strong> <span id="rsiVal"></span> — <span id="rsiDesc" class="text-info"></span></li>
+                <li class="mb-1">🔹 <strong>مؤشر MACD:</strong> <span id="macdVal"></span> — <span id="macdDesc" class="text-info"></span></li>
+                <li class="mb-1">🔹 <strong>نطاقات بولنجر (Bollinger):</strong> <span id="bbDesc" class="text-info"></span></li>
+                <li>🔹 <strong>متوسط 200 يوم (SMA 200):</strong> <span id="sma200Val"></span></li>
+            </ul>
+        </div>
+
+        <div class="box-info mb-3">
+            <div class="text-accent fw-bold small mb-1">🎯 تحليل صفقات السوينج (Swing Trading):</div>
             <div id="swingType" class="fw-bold text-light mb-1"></div>
             <div id="swingDetails" class="small text-secondary mb-2"></div>
             <div class="row g-2 text-center small">
@@ -465,18 +558,6 @@ MAIN_TEMPLATE = """
                 <div class="box-info">
                     <span class="text-secondary d-block small">مستوى المقاومة</span>
                     <strong id="resistanceVal" class="text-light"></strong>
-                </div>
-            </div>
-            <div class="col-6">
-                <div class="box-info">
-                    <span class="text-secondary d-block small">SMA 200</span>
-                    <strong id="sma200Val" class="text-light"></strong>
-                </div>
-            </div>
-            <div class="col-6">
-                <div class="box-info">
-                    <span class="text-secondary d-block small">RSI</span>
-                    <strong id="rsiVal" class="text-light"></strong>
                 </div>
             </div>
         </div>
@@ -509,12 +590,63 @@ MAIN_TEMPLATE = """
         </div>
     </div>
 
-    <!-- التذييل البارز والواضح للحقوق -->
-    <div class="author-banner text-center">
-        <span class="author-badge">الملكية والبرمجة</span>
-        <div class="author-title">{{ author }}</div>
-        <div class="small text-secondary mt-1">{{ version }} | جميع الحقوق محفوظة</div>
+    <!-- قسم الدعم الفني والملاحظات -->
+    <div class="card-panel p-3 mb-3 text-center">
+        <h6 class="text-accent fw-bold mb-2">🛠️ الدعم الفني والتواصل</h6>
+        <p class="small text-secondary mb-3">هل واجهت مشكلة أو لديك اقتراح لتطوير وتسهيل تجربتك؟</p>
+        <div class="d-flex justify-content-center gap-2">
+            <button class="btn btn-sm btn-outline-info btn-touch px-3" data-bs-toggle="modal" data-bs-target="#supportModal">💬 إرسال ملاحظة / اقتراح</button>
+        </div>
     </div>
+
+    <!-- قسم التكامل مع Alpha Vantage API -->
+    <div class="card-panel p-3 mb-3 text-center" style="border-color: rgba(56, 189, 248, 0.3);">
+        <h6 class="text-accent fw-bold mb-1">⚡ Alpha Vantage API Integration</h6>
+        <p class="small text-secondary mb-2">مصدر بيانات بدقة عالية للأسهم والعملات الرقمية والمؤشرات.</p>
+        <a href="https://www.alphavantage.co/support/#api-key" target="_blank" class="btn btn-sm btn-outline-info btn-touch">الحصول على مفتاح API المجاني ↗</a>
+    </div>
+
+    <!-- قسم الحقوق الفخم والمحدث -->
+    <div class="author-banner-luxury">
+        <span class="author-badge-luxury">👑 المطور والمالك الرسمي</span>
+        <div class="author-title-luxury">{{ author }}</div>
+        <div class="small text-secondary mt-1" style="font-size: 0.8rem;">المنصة الذكية للتحليل المالي والمؤشرات العالمية</div>
+        <div class="small text-secondary mt-2" style="font-size: 0.72rem;">معرف النظام: <code class="text-info">{{ license_key }}</code></div>
+        <div class="small text-secondary mt-1" style="font-size: 0.72rem;">{{ version }} | جميع الحقوق محفوظة ©</div>
+    </div>
+</div>
+
+<!-- Modal الدعم الفني وحل المشاكل -->
+<div class="modal fade" id="supportModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content bg-dark text-light border-secondary" style="border-radius: 16px;">
+      <div class="modal-header border-secondary">
+        <h5 class="modal-title fw-bold text-accent">📩 الدعم الفني والملاحظات</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <form id="feedbackForm">
+            <div class="mb-3">
+                <label class="form-label small text-secondary">نوع المراسلة</label>
+                <select id="fbType" class="form-select bg-secondary text-light border-0">
+                    <option value="BUG">إبلاغ عن مشكلة فنية 🛠️</option>
+                    <option value="IMPROVEMENT">اقتراح تحسين تجربة الاستخدام 💡</option>
+                    <option value="FEATURE">طلب إضافة مؤشر أو ميزة جديدة 🚀</option>
+                </select>
+            </div>
+            <div class="mb-3">
+                <label class="form-label small text-secondary">التفاصيل / الملاحظة</label>
+                <textarea id="fbMessage" class="form-control bg-secondary text-light border-0" rows="3" placeholder="اكتب ملاحظتك هنا..." required></textarea>
+            </div>
+            <div class="mb-3">
+                <label class="form-label small text-secondary">وسيلة التواصل (اختياري)</label>
+                <input type="text" id="fbContact" class="form-control bg-secondary text-light border-0" placeholder="رقم الهاتف أو البريد">
+            </div>
+            <button type="submit" class="btn btn-main w-100">إرسال الآن 🚀</button>
+        </form>
+      </div>
+    </div>
+  </div>
 </div>
 
 <div class="mobile-nav">
@@ -621,7 +753,7 @@ async function setPriceAlert() {
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({symbol: currentData.symbol, price: price, condition: 'ABOVE'})
     });
-    alert('تم تفعيل التنبيه');
+    alert('تم تفعيل التنبيه بنجاح');
 }
 
 async function fetchAnalysis() {
@@ -654,6 +786,13 @@ function renderResults(data) {
     signalElem.className = "status-badge badge-" + data.signal_badge;
 
     document.getElementById('bestTimeText').innerText = data.best_time;
+    document.getElementById('rsiVal').innerText = data.rsi;
+    document.getElementById('rsiDesc').innerText = data.rsi_desc;
+    document.getElementById('macdVal').innerText = `${data.macd} (الإشارة: ${data.macd_signal})`;
+    document.getElementById('macdDesc').innerText = data.macd_desc;
+    document.getElementById('bbDesc').innerText = data.bb_desc;
+    document.getElementById('sma200Val').innerText = data.sma_200;
+
     document.getElementById('swingType').innerText = data.swing_type;
     document.getElementById('swingDetails').innerText = data.swing_details;
     document.getElementById('target1Val').innerText = `${data.target_1} ${data.currency}`;
@@ -662,8 +801,6 @@ function renderResults(data) {
     document.getElementById('forecastText').innerText = currentLang === 'ar' ? data.forecast_ar : data.forecast_en;
     document.getElementById('supportVal').innerText = `${data.support}`;
     document.getElementById('resistanceVal').innerText = `${data.resistance}`;
-    document.getElementById('sma200Val').innerText = data.sma_200;
-    document.getElementById('rsiVal').innerText = data.rsi;
 
     calculateRisk();
     renderChart(data.chart_dates, data.chart_prices, data.chart_sma20);
@@ -739,6 +876,24 @@ document.getElementById('searchForm').addEventListener('submit', function(e) {
     e.preventDefault();
     fetchAnalysis();
 });
+
+document.getElementById('feedbackForm').addEventListener('submit', async function(e) {
+    e.preventDefault();
+    const type = document.getElementById('fbType').value;
+    const message = document.getElementById('fbMessage').value;
+    const contact = document.getElementById('fbContact').value;
+
+    await fetch('/api/feedback', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({type, message, contact})
+    });
+
+    alert('شكراً لك! تم استلام ملاحظتك بنجاح وإرسال تنبيه للمطور مباشرة.');
+    const modal = bootstrap.Modal.getInstance(document.getElementById('supportModal'));
+    modal.hide();
+    document.getElementById('feedbackForm').reset();
+});
 </script>
 </body>
 </html>
@@ -746,7 +901,7 @@ document.getElementById('searchForm').addEventListener('submit', function(e) {
 
 @app.route('/')
 def home():
-    return render_template_string(MAIN_TEMPLATE, app_name=APP_NAME, author=APP_AUTHOR, version=APP_VERSION, popular_tickers=POPULAR_TICKERS)
+    return render_template_string(MAIN_TEMPLATE, app_name=APP_NAME, author=APP_AUTHOR, version=APP_VERSION, license_key=APP_LICENSE_KEY, popular_tickers=POPULAR_TICKERS)
 
 @app.route('/api/analyze', methods=['GET'])
 def api_analyze():
@@ -803,6 +958,27 @@ def api_alerts():
         rows = cursor.fetchall()
         conn.close()
         return jsonify([{"id": r[0], "symbol": r[1], "target_price": r[2], "condition": r[3]} for r in rows])
+
+@app.route('/api/feedback', methods=['POST'])
+def api_feedback():
+    data = request.json
+    msg_type = data['type']
+    message = data['message']
+    contact = data.get('contact', '')
+    created_at = datetime.now(KSA_TZ).strftime("%Y-%m-%d %H:%M:%S")
+
+    # 1. الحفظ في قاعدة البيانات المحلية
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("INSERT INTO feedback (type, message, contact, created_at) VALUES (?, ?, ?, ?)",
+                   (msg_type, message, contact, created_at))
+    conn.commit()
+    conn.close()
+
+    # 2. إرسال الإشعار فورياً إلى هاتفك عبر التليجرام
+    send_telegram_notification(msg_type, message, contact, created_at)
+
+    return jsonify({"success": True})
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
