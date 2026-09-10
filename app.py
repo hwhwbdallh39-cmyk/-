@@ -5,14 +5,18 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 from datetime import datetime
+import pytz  # لضبط توقيت المملكة العربية السعودية
 from flask import Flask, render_template_string, request, jsonify
 
-APP_AUTHOR = "حقوق الطبع والتطوير محفوظة لـ: عبدالله علي هادي عاتي"
-APP_VERSION = "v11.0.0 (Global Auto-Refresh Edition)"
+APP_AUTHOR = "حقوق الطبع والتطوير محفوظة لـ: نجم- عبدالله علي هادي عاتي"
+APP_VERSION = "v12.2.0 (KSA Timezone & Prominent Rights Edition)"
 APP_NAME = "منصة التداول والتحليل الذكي العالمي"
 
 app = Flask(__name__)
 DB_PATH = "trading_platform.db"
+
+# تحديد التوقيت المحلي لـ المملكة العربية السعودية
+KSA_TZ = pytz.timezone('Asia/Riyadh')
 
 def init_db():
     conn = sqlite3.connect(DB_PATH)
@@ -41,21 +45,28 @@ init_db()
 CACHE = {}
 CACHE_TIMEOUT = 10
 
-# قائمة المؤشرات والأسواق العالمية التفاعلية
 GLOBAL_MARKETS = [
     {"symbol": "^GSPC", "name_ar": "أس آند بي 500", "name_en": "S&P 500"},
     {"symbol": "^DJI", "name_ar": "داو جونز", "name_en": "Dow Jones"},
     {"symbol": "^IXIC", "name_ar": "ناسداك", "name_en": "Nasdaq"},
     {"symbol": "^TASI.SR", "name_ar": "تاسي السعودي", "name_en": "TASI"},
-    {"symbol": "GC=F", "name_ar": "عقود الذهب", "name_en": "Gold Futures"},
-    {"symbol": "SI=F", "name_ar": "عقود الفضة", "name_en": "Silver Futures"},
-    {"symbol": "BZ=F", "name_ar": "نفط برنت", "name_en": "Brent Crude"}
+    {"symbol": "GC=F", "name_ar": "الذهب", "name_en": "Gold"},
+    {"symbol": "SI=F", "name_ar": "الفضة", "name_en": "Silver"},
+    {"symbol": "BZ=F", "name_ar": "نفط برنت", "name_en": "Brent Crude"},
+    {"symbol": "BTC-USD", "name_ar": "بيتكوين", "name_en": "Bitcoin"}
 ]
 
 POPULAR_TICKERS = {
     "GOLD": [
         {"symbol": "GC=F", "name_ar": "عقود الذهب", "name_en": "Gold Futures"},
         {"symbol": "SI=F", "name_ar": "عقود الفضة", "name_en": "Silver Futures"}
+    ],
+    "CRYPTO": [
+        {"symbol": "BTC-USD", "name_ar": "بيتكوين", "name_en": "Bitcoin"},
+        {"symbol": "ETH-USD", "name_ar": "إيثريوم", "name_en": "Ethereum"},
+        {"symbol": "SOL-USD", "name_ar": "سولانا", "name_en": "Solana"},
+        {"symbol": "BNB-USD", "name_ar": "بينانس كوين", "name_en": "BNB"},
+        {"symbol": "XRP-USD", "name_ar": "ريبل", "name_en": "XRP"}
     ],
     "SA": [
         {"symbol": "2222.SR", "name_ar": "أرامكو", "name_en": "Aramco"},
@@ -84,6 +95,8 @@ def analyze_market_asset(ticker_symbol, market):
         symbol = ticker_symbol.strip().upper()
         if market == 'SA' and not symbol.endswith('.SR'):
             symbol = f"{symbol}.SR"
+        elif market == 'CRYPTO' and not symbol.endswith('-USD'):
+            symbol = f"{symbol}-USD"
         elif market == 'GOLD' and symbol not in ['GC=F', 'SI=F', 'XAUUSD=X']:
             symbol = "GC=F"
 
@@ -120,21 +133,33 @@ def analyze_market_asset(ticker_symbol, market):
         latest_signal = round(float(df['Signal_Line'].iloc[-1]), 2)
         sma_200 = round(float(df['SMA_200'].iloc[-1]), 2) if not np.isnan(df['SMA_200'].iloc[-1]) else "N/A"
 
-        currency = "SAR" if market == 'SA' else ("USD" if market == 'US' else "USD/Oz")
-        stop_loss = round(latest_price * 0.96, 2)
-        
+        currency = "SAR" if market == 'SA' else ("USD" if market in ['US', 'CRYPTO'] else "USD/Oz")
+        stop_loss = round(latest_price * 0.95, 2)
+        target_1 = round(latest_price * 1.06, 2)
+        target_2 = round(latest_price * 1.12, 2)
+
+        swing_type = "محايد"
+        swing_details = "السوق يتداول في نطاق عرضي، يُنصح بالانتظار وتحديد نقطة اختراق."
+        best_time = "انتظار تأكيد الاتجاه"
+
         if latest_rsi < 35 and latest_macd > latest_signal:
-            signal_ar, signal_en = "مناسب للشراء (تجميع)", "Strong Buy"
+            signal_ar, signal_en = "أفضل وقت للشراء (تجميع)", "Optimal Buy Zone"
             signal_badge = "buy"
-            forecast_ar = "توقعات بارتفاع القيمة وانعكاس الاتجاه للأعلى."
+            forecast_ar = "توقعات بارتفاع القيمة وانعكاس الاتجاه للأعلى بناءً على المؤشرات الفنية."
             forecast_en = "Bullish reversal expected soon."
+            swing_type = "صفقة سوينج صاعدة (Long Swing)"
+            swing_details = f"دخول آمن بالقرب من مستوى الدعم ({support}). الهدف الأول ({target_1}) والهدف الثاني ({target_2})."
+            best_time = "الآن (شراء تدريجي مع الحفاظ على وقف الخسارة)"
         elif latest_rsi > 70 or (latest_price >= resistance * 0.98 and latest_macd < latest_signal):
-            signal_ar, signal_en = "مناسب للبيع (جني أرباح)", "Strong Sell"
+            signal_ar, signal_en = "أفضل وقت للبيع (جني أرباح)", "Optimal Sell Zone"
             signal_badge = "sell"
-            forecast_ar = "توقعات بانخفاض مؤقت وتراجع في السعر."
+            forecast_ar = "توقعات بانخفاض مؤقت وتراجع في السعر بسبب وصول السهم لمناطق تشبع شرائي."
             forecast_en = "Bearish correction expected soon."
+            swing_type = "صفقة سوينج هابطة / جني أرباح"
+            swing_details = f"الوصول لمناطق المقاومة ({resistance}). يُفضل تخفيف الكميات أو البيع وإعادة الشراء من مناطق أدنى."
+            best_time = "الآن (تخفيف الكميات وجني الأرباح)"
         else:
-            signal_ar, signal_en = "حالة استقرار (انتظار)", "Hold / Neutral"
+            signal_ar, signal_en = "حالة استقرار (مراقبة)", "Hold / Neutral"
             signal_badge = "hold"
             forecast_ar = "تذبذب واستقرار مسار السعر في نطاق عرضي."
             forecast_en = "Price consolidating in a neutral range."
@@ -143,6 +168,10 @@ def analyze_market_asset(ticker_symbol, market):
         dates = [d.strftime('%m-%d') for d in chart_df.index]
         prices = [round(p, 2) for p in chart_df['Close'].tolist()]
         sma20 = [round(p, 2) for p in chart_df['SMA_20'].tolist()]
+
+        # الحصول على الوقت الحالي بتوقيت مكة المكرمة / السعودية
+        ksa_now = datetime.now(KSA_TZ)
+        last_updated_ksa = ksa_now.strftime("%I:%M:%S %p") + " (بتوقيت السعودية)"
 
         result = {
             "symbol": symbol,
@@ -153,16 +182,21 @@ def analyze_market_asset(ticker_symbol, market):
             "support": support,
             "resistance": resistance,
             "stop_loss": stop_loss,
+            "target_1": target_1,
+            "target_2": target_2,
             "sma_200": sma_200,
             "signal_ar": signal_ar,
             "signal_en": signal_en,
             "signal_badge": signal_badge,
             "forecast_ar": forecast_ar,
             "forecast_en": forecast_en,
+            "swing_type": swing_type,
+            "swing_details": swing_details,
+            "best_time": best_time,
             "chart_dates": dates,
             "chart_prices": prices,
             "chart_sma20": sma20,
-            "last_updated": datetime.now().strftime("%H:%M:%S")
+            "last_updated": last_updated_ksa
         }
 
         CACHE[cache_key] = {'time': now, 'data': result}
@@ -226,19 +260,14 @@ MAIN_TEMPLATE = """
             --accent-color: #0284c7;
             --box-bg: #f1f5f9;
         }
-        * {
-            -webkit-tap-highlight-color: transparent;
-            user-select: none;
-        }
-        input, select, textarea {
-            user-select: text !important;
-        }
+        * { -webkit-tap-highlight-color: transparent; user-select: none; }
+        input, select, textarea { user-select: text !important; }
         body { 
             background-color: var(--bg-color); 
             color: var(--text-main); 
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; 
             padding-top: var(--sat);
-            padding-bottom: calc(75px + var(--sab)); 
+            padding-bottom: calc(90px + var(--sab)); 
             touch-action: manipulation;
         }
         .card-panel { background-color: var(--card-bg); border: 1px solid var(--border-color); border-radius: 16px; }
@@ -253,6 +282,45 @@ MAIN_TEMPLATE = """
         .ticker-wrap { overflow: hidden; white-space: nowrap; background: var(--card-bg); border-bottom: 1px solid var(--border-color); font-size: 0.85rem; }
         .ticker { display: inline-block; animation: ticker 30s linear infinite; }
         @keyframes ticker { 0% { transform: translate3d(0, 0, 0); } 100% { transform: translate3d(-50%, 0, 0); } }
+
+        /* تصميم كرت حقوق الطبع الفخم والبارز */
+        .author-banner {
+            background: linear-gradient(135deg, rgba(56, 189, 248, 0.2), rgba(16, 185, 129, 0.2));
+            border: 2px solid var(--accent-color);
+            border-radius: 20px;
+            padding: 20px 15px;
+            margin-top: 25px;
+            box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4);
+            position: relative;
+            overflow: hidden;
+        }
+        .author-banner::before {
+            content: '';
+            position: absolute;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background: radial-gradient(circle, rgba(255,255,255,0.1) 0%, transparent 60%);
+            pointer-events: none;
+        }
+        .author-title {
+            font-size: 1.35rem;
+            font-weight: 900;
+            color: #ffffff;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.5);
+            letter-spacing: 0.5px;
+        }
+        .author-badge {
+            display: inline-block;
+            background-color: var(--accent-color);
+            color: #000;
+            font-weight: bold;
+            font-size: 0.8rem;
+            padding: 3px 12px;
+            border-radius: 12px;
+            margin-bottom: 8px;
+        }
 
         .mobile-nav {
             position: fixed;
@@ -305,16 +373,14 @@ MAIN_TEMPLATE = """
 </div>
 
 <div class="container py-3 px-3" style="max-width: 600px;">
-    <!-- الهيدر -->
     <div class="d-flex justify-content-between align-items-center mb-3">
         <div>
             <h4 class="fw-bold text-accent m-0" id="appTitle">{{ app_name }}</h4>
-            <span class="small text-secondary"><span class="pulse-dot me-1"></span> تحديث مباشر للأسواق</span>
+            <span class="small text-secondary"><span class="pulse-dot me-1"></span> تحديث آلي مباشر بتوقيت السعودية</span>
         </div>
         <button onclick="toggleTheme()" class="btn btn-sm btn-outline-secondary btn-touch px-3" id="themeBtn">🌙/☀️</button>
     </div>
 
-    <!-- المفضلة -->
     <div class="card-panel p-3 mb-3">
         <div class="d-flex justify-content-between align-items-center mb-2">
             <span class="small text-secondary fw-bold">⭐ المفضلة (Watchlist):</span>
@@ -323,7 +389,6 @@ MAIN_TEMPLATE = """
         <div id="watchlistContainer" class="d-flex flex-wrap gap-2"></div>
     </div>
 
-    <!-- البحث والتحديد -->
     <div class="card-panel p-3 mb-3">
         <form id="searchForm">
             <div class="mb-2">
@@ -331,29 +396,29 @@ MAIN_TEMPLATE = """
                 <select id="marketSelect" class="form-select bg-dark text-light border-secondary">
                     <option value="US">السوق الأمريكي (US)</option>
                     <option value="SA">السوق السعودي (TASI)</option>
+                    <option value="CRYPTO">العملات الرقمية (Crypto)</option>
                     <option value="GOLD">الذهب والفضة (Gold/Silver)</option>
                 </select>
             </div>
 
             <div class="mb-3">
                 <label class="form-label text-secondary small mb-1" id="lblSymbol">رمز السهم / الأصل</label>
-                <input type="text" id="tickerInput" class="form-control bg-dark text-light border-secondary" placeholder="AAPL أو 2222 أو GC=F" required>
+                <input type="text" id="tickerInput" class="form-control bg-dark text-light border-secondary" placeholder="AAPL, BTC, 2222, GC=F" required>
             </div>
 
             <div class="mb-3">
                 <div id="quickSelectButtons" class="d-flex flex-wrap gap-1"></div>
             </div>
 
-            <button type="submit" class="btn btn-main w-100 py-2" id="btnAnalyze">تحليل مباشر 🚀</button>
+            <button type="submit" class="btn btn-main w-100 py-2" id="btnAnalyze">تحليل ودراسة الحالة 🚀</button>
         </form>
     </div>
 
-    <!-- نتائج التحليل -->
     <div id="resultContainer" class="card-panel p-3 mb-4" style="display:none;">
         <div class="d-flex justify-content-between align-items-center pb-2 border-bottom border-secondary">
             <div>
                 <h4 id="stockSymbol" class="m-0 text-accent fw-bold"></h4>
-                <span class="text-secondary small">● تحديث آلي (آخر تحديث: <span id="lastUpdated">--</span>)</span>
+                <span class="text-secondary small">● آخر تحديث: <span id="lastUpdated" class="text-info fw-bold">--</span></span>
             </div>
             <div class="text-end">
                 <h4 id="stockPrice" class="m-0 fw-bold"></h4>
@@ -366,7 +431,22 @@ MAIN_TEMPLATE = """
         </div>
 
         <div class="box-info mb-3">
-            <div class="text-accent fw-bold small mb-1">الاتجاه المتوقع:</div>
+            <div class="text-accent fw-bold small mb-1">💡 التوقيت الأفضل للتداول:</div>
+            <div id="bestTimeText" class="small fw-bold text-warning"></div>
+        </div>
+
+        <div class="box-info mb-3">
+            <div class="text-accent fw-bold small mb-1">🎯 تحليل صفقات السوينج المتوقعة (Swing Trading):</div>
+            <div id="swingType" class="fw-bold text-light mb-1"></div>
+            <div id="swingDetails" class="small text-secondary mb-2"></div>
+            <div class="row g-2 text-center small">
+                <div class="col-6"><span class="text-secondary">الهدف الأول:</span> <strong id="target1Val" class="text-success"></strong></div>
+                <div class="col-6"><span class="text-secondary">الهدف الثاني:</span> <strong id="target2Val" class="text-success"></strong></div>
+            </div>
+        </div>
+
+        <div class="box-info mb-3">
+            <div class="text-accent fw-bold small mb-1">الاتجاه المتوقع ودراسة الحركة:</div>
             <div id="forecastText" class="small"></div>
         </div>
 
@@ -427,6 +507,13 @@ MAIN_TEMPLATE = """
                 </div>
             </div>
         </div>
+    </div>
+
+    <!-- التذييل البارز والواضح للحقوق -->
+    <div class="author-banner text-center">
+        <span class="author-badge">الملكية والبرمجة</span>
+        <div class="author-title">{{ author }}</div>
+        <div class="small text-secondary mt-1">{{ version }} | جميع الحقوق محفوظة</div>
     </div>
 </div>
 
@@ -565,6 +652,12 @@ function renderResults(data) {
     const signalElem = document.getElementById('tradeSignal');
     signalElem.innerText = currentLang === 'ar' ? data.signal_ar : data.signal_en;
     signalElem.className = "status-badge badge-" + data.signal_badge;
+
+    document.getElementById('bestTimeText').innerText = data.best_time;
+    document.getElementById('swingType').innerText = data.swing_type;
+    document.getElementById('swingDetails').innerText = data.swing_details;
+    document.getElementById('target1Val').innerText = `${data.target_1} ${data.currency}`;
+    document.getElementById('target2Val').innerText = `${data.target_2} ${data.currency}`;
 
     document.getElementById('forecastText').innerText = currentLang === 'ar' ? data.forecast_ar : data.forecast_en;
     document.getElementById('supportVal').innerText = `${data.support}`;
@@ -714,4 +807,3 @@ def api_alerts():
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)
-    
