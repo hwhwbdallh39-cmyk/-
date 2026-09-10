@@ -12,17 +12,13 @@ from flask import Flask, render_template_string, request, jsonify
 APP_AUTHOR = "حقوق الطبع والتطوير محفوظة لـ: نجم- عبدالله علي هادي عاتي"
 APP_VERSION = "v18.0.0 (Alpha Vantage & Secure License Edition)"
 APP_NAME = "منصة التداول والتحليل الذكي العالمي"
-APP_LICENSE_KEY = "0O3HPSMIK9VZDTPM"  # الرمز المعرف / الترخيص الخاص بك
+APP_LICENSE_KEY = "0O3HPSMIK9VZDTPM"
 
-# -------------------------------------------------------------
-# إعدادات بوت التليجرام (تمت إضافة التوكن والمعرف الخاص بك) ومفتاح Alpha Vantage API
-# -------------------------------------------------------------
 TELEGRAM_BOT_TOKEN = "8873564925:AAG3VLeyuiVPxHOB-_QC15FyIpI59k6Xq6k"
 TELEGRAM_CHAT_ID = "6930051528"
 ALPHAVANTAGE_API_KEY = os.environ.get("ALPHAVANTAGE_API_KEY", "ضع_مفتاح_AlphaVantage_هنا")
 
 def send_telegram_notification(msg_type, message, contact, created_at):
-    """دالة إرسال التنبيهات الفورية إلى تليجرام المطور"""
     if not TELEGRAM_BOT_TOKEN or TELEGRAM_BOT_TOKEN == "ضع_توكن_البوت_هنا":
         return
 
@@ -136,7 +132,6 @@ POPULAR_TICKERS = {
 }
 
 def fetch_alpha_vantage_data(symbol, market):
-    """جلب البيانات باستخدام Alpha Vantage API كبديل دقيق وداعم للمجتمع المالي"""
     if not ALPHAVANTAGE_API_KEY or ALPHAVANTAGE_API_KEY == "ضع_مفتاح_AlphaVantage_هنا":
         return None
     
@@ -339,9 +334,6 @@ def get_market_overview():
             pass
     return res
 
-# -------------------------------------------------------------
-# مسار استقبال الشكاوى والاقتراحات وإرسالها المباشر لمطور `@Nagm_Trader_Bot`
-# -------------------------------------------------------------
 @app.route('/api/feedback', methods=['POST'])
 def handle_feedback():
     try:
@@ -362,10 +354,9 @@ def handle_feedback():
         conn.commit()
         conn.close()
         
-        # إرسال التنبيه الفوري لتليجرام المطور عبر @Nagm_Trader_Bot
         send_telegram_notification(msg_type, message, contact, created_at)
         
-        return jsonify({"status": "success", "message": "تم إرسال ملاحظتك مباشرة مع المطور بنجاح شكراً لك!"})
+        return jsonify({"status": "success", "message": "تم إرسال ملاحظتك مباشرة للمطور بنجاح، شكراً لك!"})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 400
 
@@ -543,10 +534,10 @@ MAIN_TEMPLATE = """
     </div>
 
     <div class="card-panel p-3 mb-3">
-        <form id="searchForm">
+        <form id="searchForm" onsubmit="event.preventDefault(); runAnalysis();">
             <div class="mb-2">
                 <label class="form-label text-secondary small mb-1">اختر السوق</label>
-                <select id="marketSelect" class="form-select bg-dark text-light border-secondary">
+                <select id="marketSelect" class="form-select bg-dark text-light border-secondary" onchange="renderQuickButtons()">
                     <option value="US">السوق الأمريكي (US)</option>
                     <option value="SA">السوق السعودي (TASI)</option>
                     <option value="CRYPTO">العملات الرقمية (Crypto)</option>
@@ -563,7 +554,7 @@ MAIN_TEMPLATE = """
                 <div id="quickSelectButtons" class="d-flex flex-wrap gap-1"></div>
             </div>
 
-            <button type="submit" class="btn btn-main w-100 py-2">تحليل ودراسة المؤشرات 🚀</button>
+            <button type="submit" id="submitBtn" class="btn btn-main w-100 py-2">تحليل ودراسة المؤشرات 🚀</button>
         </form>
     </div>
 
@@ -610,7 +601,7 @@ MAIN_TEMPLATE = """
 
         <div class="box-info mb-3">
             <div class="text-accent fw-bold small mb-1">الاتجاه المتوقع ودراسة الحركة:</div>
-            <div id="forecastText" class="small"></div>
+            <div id="forecastText" class="small text-light"></div>
         </div>
 
         <div class="box-info mb-3">
@@ -660,7 +651,7 @@ MAIN_TEMPLATE = """
         </div>
     </div>
 
-    <!-- قسم الشكاوى والاقتراحات مباشرة مع المطور (@Nagm_Trader_Bot) -->
+    <!-- قسم الشكاوى والاقتراحات مباشرة مع المطور -->
     <div class="card-panel p-3 mb-3 text-center" style="border-color: rgba(56, 189, 248, 0.4);">
         <h6 class="text-accent fw-bold mb-2">🛠️ الشكاوى والاقتراحات مع المطور</h6>
         <p class="small text-secondary mb-3">أرسل ملاحظتك أو اقتراحك لتصل مباشرة عبر بوت المطور التليجرام.</p>
@@ -674,6 +665,19 @@ MAIN_TEMPLATE = """
         <h6 class="text-accent fw-bold mb-1">⚡ Alpha Vantage API Integration</h6>
         <p class="small text-secondary mb-2">مصدر بيانات بدقة عالية للأسهم والعملات الرقمية والمؤشرات.</p>
         <a href="https://www.alphavantage.co/support/#api-key" target="_blank" class="btn btn-sm btn-outline-info btn-touch">الحصول على مفتاح API المجاني ↗</a>
+    </div>
+
+    <!-- قسم إخلاء المسؤولية -->
+    <div class="card-panel p-3 mb-4" style="border-left: 4px solid #ef4444; background-color: rgba(239, 68, 68, 0.05);">
+        <h6 class="text-danger fw-bold mb-2">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-exclamation-triangle-fill me-1" viewBox="0 0 16 16">
+              <path d="M8.982 1.566a1.13 1.13 0 0 0-1.96 0L.165 13.233c-.457.778.091 1.767.98 1.767h13.713c.889 0 1.438-.99.98-1.767L8.982 1.566zM8 5c.535 0 .954.462.9.995l-.35 3.507a.552.552 0 0 1-1.1 0L7.1 5.995A.905.905 0 0 1 8 5zm.002 6a1 1 0 1 1 0 2 1 1 0 0 1 0-2z"/>
+            </svg>
+            إخلاء مسؤولية (Disclaimer)
+        </h6>
+        <p class="small text-secondary mb-0" style="line-height: 1.6; font-size: 0.8rem;">
+            جميع البيانات، المؤشرات، والتحليلات المقدمة في <strong>{{ app_name }}</strong> هي لأغراض تعليمية وإرشادية ومعلوماتية فقط، ولا تُعد بأي حال من الأحوال توصية مالية مباشرة بالبيع أو الشراء. التداول في الأسواق المالية (الأسهم، العملات الرقمية، الذهب وغيرها) ينطوي على مخاطر عالية جداً وقد يؤدي إلى خسارة جزء أو كل رأس مالك. أنت المسؤول الأول والأخير عن قراراتك الاستثمارية، والمطور ({{ author }}) لا يتحمل أي مسؤولية قانونية أو مالية عن أي خسائر قد تتكبدها نتيجة لاستخدامك لهذه المنصة.
+        </p>
     </div>
 
     <!-- قسم الحقوق الفخم والمحدث -->
@@ -710,300 +714,273 @@ MAIN_TEMPLATE = """
             </div>
             <div class="mb-3">
                 <label class="form-label small text-secondary">وسيلة التواصل (اختياري)</label>
-                <input type="text" id="fbContact" class="form-control bg-secondary text-light border-0" placeholder="رقم الهاتف أو البريد">
+                <input type="text" id="fbContact" class="form-control bg-secondary text-light border-0" placeholder="رقم الجوال أو البريد الإلكتروني">
             </div>
-            <button type="submit" class="btn btn-main w-100">إرسال مباشرة للمطور 🚀</button>
+            <div id="fbAlert" class="alert d-none small p-2"></div>
+            <button type="button" onclick="submitFeedback()" class="btn btn-main w-100 py-2">إرسال الملاحظة 🚀</button>
         </form>
       </div>
     </div>
   </div>
 </div>
 
-<div class="mobile-nav">
-    <button onclick="window.scrollTo({top: 0, behavior: 'smooth'});" class="active">
-        <span>🔍</span>
-        <span>بحث</span>
-    </button>
-    <button onclick="document.getElementById('resultContainer').scrollIntoView({behavior: 'smooth'});">
-        <span>📈</span>
-        <span>التحليل</span>
-    </button>
-    <button onclick="fetchWatchlist();">
-        <span>⭐</span>
-        <span>المفضلة</span>
-    </button>
-    <button onclick="toggleLanguage();">
-        <span>🌐</span>
-        <span id="navLang">EN</span>
-    </button>
-</div>
-
 <script>
-const popularTickers = {{ popular_tickers|tojson }};
-let currentLang = 'ar';
-let autoRefreshTimer = null;
-let chartInstance = null;
-let currentData = null;
+    let currentChart = null;
+    let currentData = null;
 
-function toggleTheme() {
-    const html = document.getElementById('htmlTag');
-    const theme = html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
-    html.setAttribute('data-theme', theme);
-}
+    const popularTickers = {{ popular_tickers | tojson }};
 
-function toggleLanguage() {
-    currentLang = currentLang === 'ar' ? 'en' : 'ar';
-    document.getElementById('htmlTag').dir = currentLang === 'ar' ? 'rtl' : 'ltr';
-    document.getElementById('navLang').innerText = currentLang === 'ar' ? 'EN' : 'عربي';
-    updateQuickButtons();
-    loadMarketOverview();
-    if(currentData) renderResults(currentData);
-}
+    function toggleTheme() {
+        const html = document.getElementById('htmlTag');
+        const current = html.getAttribute('data-theme');
+        html.setAttribute('data-theme', current === 'dark' ? 'light' : 'dark');
+    }
 
-async function loadMarketOverview() {
-    try {
-        const res = await fetch('/api/market_overview');
-        const data = await res.json();
-        let text = "";
-        data.forEach(item => {
-            const name = currentLang === 'ar' ? item.name_ar : item.name_en;
-            const color = item.change >= 0 ? '#10b981' : '#ef4444';
-            const sign = item.change >= 0 ? '+' : '';
-            text += `<span class="me-4">${name}: <strong>${item.price}</strong> <span style="color:${color}">(${sign}${item.change}%)</span></span> `;
+    function renderQuickButtons() {
+        const market = document.getElementById('marketSelect').value;
+        const container = document.getElementById('quickSelectButtons');
+        container.innerHTML = '';
+        const list = popularTickers[market] || [];
+        list.forEach(item => {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'btn btn-sm btn-outline-secondary py-1 px-2';
+            btn.style.fontSize = '0.75rem';
+            btn.innerText = item.name_ar;
+            btn.onclick = () => {
+                document.getElementById('tickerInput').value = item.symbol;
+                runAnalysis();
+            };
+            container.appendChild(btn);
         });
-        document.getElementById('marketTicker').innerHTML = text + text;
-    } catch(e){}
-}
+    }
 
-loadMarketOverview();
-setInterval(loadMarketOverview, 10000);
+    async function loadMarketOverview() {
+        try {
+            const res = await fetch('/api/market_overview');
+            const data = await res.json();
+            if(data.length > 0) {
+                const tickerEl = document.getElementById('marketTicker');
+                tickerEl.innerHTML = data.map(item => {
+                    const color = item.change >= 0 ? '#10b981' : '#ef4444';
+                    const sign = item.change >= 0 ? '+' : '';
+                    return `<span class="me-4"><strong>${item.name_ar}:</strong> ${item.price} <span style="color:${color}">(${sign}${item.change}%)</span></span>`;
+                }).join('');
+            }
+        } catch(e) {}
+    }
 
-async function fetchWatchlist() {
-    const res = await fetch('/api/watchlist');
-    const data = await res.json();
-    const container = document.getElementById('watchlistContainer');
-    container.innerHTML = '';
-    data.forEach(item => {
-        const btn = document.createElement('button');
-        btn.className = 'btn btn-sm btn-dark text-info border-secondary btn-touch px-2 py-1';
-        btn.innerText = item.symbol;
-        btn.onclick = () => {
-            document.getElementById('tickerInput').value = item.symbol;
-            document.getElementById('marketSelect').value = item.market;
-            document.getElementById('searchForm').dispatchEvent(new Event('submit'));
-        };
-        container.appendChild(btn);
-    });
-}
-fetchWatchlist();
+    async function loadWatchlist() {
+        try {
+            const res = await fetch('/api/watchlist');
+            const items = await res.json();
+            const container = document.getElementById('watchlistContainer');
+            container.innerHTML = items.length === 0 ? '<span class="small text-secondary">لا توجد عناصر بالمفضلة</span>' : '';
+            items.forEach(item => {
+                const badge = document.createElement('span');
+                badge.className = 'badge bg-secondary p-2 d-flex align-items-center gap-1';
+                badge.style.cursor = 'pointer';
+                badge.innerHTML = `${item.symbol} <span onclick="removeWatchlist('${item.symbol}', event)" style="color:#ef4444; font-weight:bold;">&times;</span>`;
+                badge.onclick = (e) => {
+                    document.getElementById('tickerInput').value = item.symbol;
+                    document.getElementById('marketSelect').value = item.market;
+                    runAnalysis();
+                };
+                container.appendChild(badge);
+            });
+        } catch(e) {}
+    }
 
-function updateQuickButtons() {
-    const market = document.getElementById('marketSelect').value;
-    const container = document.getElementById('quickSelectButtons');
-    container.innerHTML = '';
-    const items = popularTickers[market] || [];
-    items.forEach(i => {
-        const b = document.createElement('button');
-        b.type = 'button';
-        b.className = 'btn btn-sm btn-outline-secondary btn-touch py-1 px-2';
-        b.style.fontSize = '0.8rem';
-        b.innerText = currentLang === 'ar' ? i.name_ar : i.name_en;
-        b.onclick = () => {
-            document.getElementById('tickerInput').value = i.symbol;
-            document.getElementById('searchForm').dispatchEvent(new Event('submit'));
-        };
-        container.appendChild(b);
-    });
-}
-
-document.getElementById('marketSelect').addEventListener('change', updateQuickButtons);
-updateQuickButtons();
-
-document.getElementById('searchForm').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const symbol = document.getElementById('tickerInput').value.trim();
-    const market = document.getElementById('marketSelect').value;
-    if(!symbol) return;
-
-    const submitBtn = e.target.querySelector('button[type="submit"]');
-    submitBtn.innerText = "جاري التحليل ودراسة المؤشرات...";
-    submitBtn.disabled = true;
-
-    try {
-        const res = await fetch('/api/analyze', {
+    async function addCurrentToWatchlist() {
+        if(!currentData || !currentData.symbol) return;
+        await fetch('/api/watchlist', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({symbol, market})
+            body: JSON.stringify({ symbol: currentData.symbol, market: currentData.market })
         });
-        const data = await res.json();
-        submitBtn.innerText = "تحليل ودراسة المؤشرات 🚀";
-        submitBtn.disabled = false;
+        loadWatchlist();
+    }
 
-        if(data.error_ar) {
-            alert(currentLang === 'ar' ? data.error_ar : data.error_en);
+    async function removeWatchlist(symbol, event) {
+        event.stopPropagation();
+        await fetch('/api/watchlist', {
+            method: 'DELETE',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ symbol })
+        });
+        loadWatchlist();
+    }
+
+    async function runAnalysis() {
+        const symbol = document.getElementById('tickerInput').value;
+        const market = document.getElementById('marketSelect').value;
+        const submitBtn = document.getElementById('submitBtn');
+        if(!symbol) return;
+
+        submitBtn.disabled = true;
+        submitBtn.innerText = 'جاري تحليل المؤشرات... ⏳';
+
+        try {
+            const res = await fetch('/api/analyze', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ symbol, market })
+            });
+            const data = await res.json();
+
+            if(data.error_ar) {
+                alert(data.error_ar);
+                submitBtn.disabled = false;
+                submitBtn.innerText = 'تحليل ودراسة المؤشرات 🚀';
+                return;
+            }
+
+            currentData = data;
+            document.getElementById('resultContainer').style.display = 'block';
+            document.getElementById('stockSymbol').innerText = data.symbol;
+            document.getElementById('stockPrice').innerText = `${data.price} ${data.currency}`;
+            document.getElementById('lastUpdated').innerText = data.last_updated;
+
+            const badge = document.getElementById('tradeSignal');
+            badge.className = `status-badge badge-${data.signal_badge}`;
+            badge.innerText = data.signal_ar;
+
+            document.getElementById('bestTimeText').innerText = data.best_time;
+            document.getElementById('rsiVal').innerText = data.rsi;
+            document.getElementById('rsiDesc').innerText = data.rsi_desc;
+            document.getElementById('macdVal').innerText = data.macd;
+            document.getElementById('macdDesc').innerText = data.macd_desc;
+            document.getElementById('bbDesc').innerText = data.bb_desc;
+            document.getElementById('sma200Val').innerText = data.sma_200;
+
+            document.getElementById('swingType').innerText = data.swing_type;
+            document.getElementById('swingDetails').innerText = data.swing_details;
+            document.getElementById('target1Val').innerText = `${data.target_1} ${data.currency}`;
+            document.getElementById('target2Val').innerText = `${data.target_2} ${data.currency}`;
+
+            document.getElementById('forecastText').innerText = data.forecast_ar;
+            document.getElementById('supportVal').innerText = `${data.support} ${data.currency}`;
+            document.getElementById('resistanceVal').innerText = `${data.resistance} ${data.currency}`;
+            document.getElementById('stopLossVal').innerText = `${data.stop_loss} ${data.currency}`;
+
+            calculateRisk();
+            renderChart(data.chart_dates, data.chart_prices, data.chart_sma20);
+
+        } catch(e) {
+            alert('حدث خطأ أثناء جلب البيانات.');
+        } finally {
+            submitBtn.disabled = false;
+            submitBtn.innerText = 'تحليل ودراسة المؤشرات 🚀';
+        }
+    }
+
+    function calculateRisk() {
+        if(!currentData) return;
+        const capital = parseFloat(document.getElementById('capitalInput').value) || 10000;
+        const price = currentData.price;
+        const shares = Math.floor((capital * 0.10) / price);
+        document.getElementById('sharesVal').innerText = `${shares} سهم/وحدة`;
+    }
+
+    function setPriceAlert() {
+        const val = document.getElementById('alertPriceInput').value;
+        if(!val) return;
+        alert(`تم تفعيل تنبيه السعر عند ${val} بنجاح!`);
+    }
+
+    function renderChart(dates, prices, sma20) {
+        const ctx = document.getElementById('priceChart').getContext('2d');
+        if(currentChart) currentChart.destroy();
+
+        currentChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: dates,
+                datasets: [
+                    {
+                        label: 'السعر',
+                        data: prices,
+                        borderColor: '#38bdf8',
+                        backgroundColor: 'rgba(56, 189, 248, 0.1)',
+                        fill: true,
+                        tension: 0.2
+                    },
+                    {
+                        label: 'متوسط 20 (SMA)',
+                        data: sma20,
+                        borderColor: '#f59e0b',
+                        borderDash: [5, 5],
+                        fill: false
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                plugins: { legend: { labels: { color: '#94a3b8' } } },
+                scales: {
+                    x: { ticks: { color: '#94a3b8' }, grid: { color: '#243049' } },
+                    y: { ticks: { color: '#94a3b8' }, grid: { color: '#243049' } }
+                }
+            }
+        });
+    }
+
+    function exportReport() {
+        html2canvas(document.getElementById('resultContainer')).then(canvas => {
+            const link = document.createElement('a');
+            link.download = `report_${currentData ? currentData.symbol : 'trade'}.png`;
+            link.href = canvas.toDataURL();
+            link.click();
+        });
+    }
+
+    async function submitFeedback() {
+        const type = document.getElementById('fbType').value;
+        const message = document.getElementById('fbMessage').value;
+        const contact = document.getElementById('fbContact').value;
+        const alertBox = document.getElementById('fbAlert');
+
+        if(!message) {
+            alertBox.className = 'alert alert-danger d-block small p-2';
+            alertBox.innerText = 'الرجاء كتابة تفاصيل الملاحظة.';
             return;
         }
 
-        currentData = data;
-        renderResults(data);
-        document.getElementById('resultContainer').style.display = 'block';
-        document.getElementById('resultContainer').scrollIntoView({behavior: 'smooth'});
-    } catch(err) {
-        submitBtn.innerText = "تحليل ودراسة المؤشرات 🚀";
-        submitBtn.disabled = false;
-        alert("حدث خطأ أثناء الاتصال بالخادم.");
-    }
-});
-
-function renderResults(data) {
-    document.getElementById('stockSymbol').innerText = data.symbol + " (" + data.market + ")";
-    document.getElementById('stockPrice').innerText = data.price + " " + data.currency;
-    document.getElementById('lastUpdated').innerText = data.last_updated;
-
-    const signalBadge = document.getElementById('tradeSignal');
-    signalBadge.innerText = currentLang === 'ar' ? data.signal_ar : data.signal_en;
-    signalBadge.className = "status-badge badge-" + data.signal_badge;
-
-    document.getElementById('bestTimeText').innerText = data.best_time;
-    document.getElementById('rsiVal').innerText = data.rsi;
-    document.getElementById('rsiDesc').innerText = data.rsi_desc;
-    document.getElementById('macdVal').innerText = data.macd;
-    document.getElementById('macdDesc').innerText = data.macd_desc;
-    document.getElementById('bbDesc').innerText = data.bb_desc;
-    document.getElementById('sma200Val').innerText = data.sma_200;
-
-    document.getElementById('swingType').innerText = data.swing_type;
-    document.getElementById('swingDetails').innerText = data.swing_details;
-    document.getElementById('target1Val').innerText = data.target_1 + " " + data.currency;
-    document.getElementById('target2Val').innerText = data.target_2 + " " + data.currency;
-    document.getElementById('forecastText').innerText = currentLang === 'ar' ? data.forecast_ar : data.forecast_en;
-
-    document.getElementById('supportVal').innerText = data.support + " " + data.currency;
-    document.getElementById('resistanceVal').innerText = data.resistance + " " + data.currency;
-    document.getElementById('stopLossVal').innerText = data.stop_loss + " " + data.currency;
-
-    calculateRisk();
-
-    const ctx = document.getElementById('priceChart').getContext('2d');
-    if(chartInstance) chartInstance.destroy();
-    chartInstance = new Chart(ctx, {
-        type: 'line',
-        data: {
-            labels: data.chart_dates,
-            datasets: [
-                {
-                    label: 'السعر',
-                    data: data.chart_prices,
-                    borderColor: '#38bdf8',
-                    backgroundColor: 'rgba(56, 189, 248, 0.1)',
-                    borderWidth: 2,
-                    fill: true,
-                    tension: 0.2
-                },
-                {
-                    label: 'متوسط 20',
-                    data: data.chart_sma20,
-                    borderColor: '#f59e0b',
-                    borderWidth: 1.5,
-                    borderDash: [4, 4],
-                    fill: false,
-                    tension: 0.2
-                }
-            ]
-        },
-        options: {
-            responsive: true,
-            plugins: { legend: { display: true, labels: { color: '#94a3b8' } } },
-            scales: {
-                x: { ticks: { color: '#94a3b8' }, grid: { color: '#243049' } },
-                y: { ticks: { color: '#94a3b8' }, grid: { color: '#243049' } }
+        try {
+            const res = await fetch('/api/feedback', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ type, message, contact })
+            });
+            const data = await res.json();
+            
+            if(data.status === 'success') {
+                alertBox.className = 'alert alert-success d-block small p-2';
+                alertBox.innerText = data.message;
+                document.getElementById('fbMessage').value = '';
+                setTimeout(() => {
+                    var myModalEl = document.getElementById('supportModal');
+                    var modal = bootstrap.Modal.getInstance(myModalEl);
+                    modal.hide();
+                    alertBox.className = 'alert d-none';
+                }, 2000);
+            } else {
+                alertBox.className = 'alert alert-danger d-block small p-2';
+                alertBox.innerText = data.message;
             }
+        } catch(err) {
+            alertBox.className = 'alert alert-danger d-block small p-2';
+            alertBox.innerText = 'حدث خطأ في الاتصال بالسيرفر.';
         }
-    });
-}
-
-function calculateRisk() {
-    if(!currentData) return;
-    const capital = parseFloat(document.getElementById('capitalInput').value) || 10000;
-    const price = currentData.price;
-    const stopLoss = currentData.stop_loss;
-    if(price > 0 && price > stopLoss) {
-        const riskPerShare = price - stopLoss;
-        const maxRiskAmount = capital * 0.02; // المخاطرة بـ 2%
-        let shares = Math.floor(maxRiskAmount / riskPerShare);
-        if(shares < 1) shares = 1;
-        document.getElementById('sharesVal').innerText = shares + " سهم / وحدة";
-    } else {
-        document.getElementById('sharesVal').innerText = "غير متوفر";
     }
-}
 
-async function addCurrentToWatchlist() {
-    if(!currentData) {
-        alert("الرجاء تحليل سهم أو أصل أولاً.");
-        return;
-    }
-    await fetch('/api/watchlist', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({symbol: currentData.symbol, market: currentData.market})
-    });
-    fetchWatchlist();
-    alert("تمت الإضافة للمفضلة بنجاح!");
-}
-
-async function setPriceAlert() {
-    if(!currentData) {
-        alert("الرجاء تحليل سهم أو أصل أولاً.");
-        return;
-    }
-    const targetPrice = document.getElementById('alertPriceInput').value;
-    if(!targetPrice) {
-        alert("الرجاء إدخال السعر المستهدف.");
-        return;
-    }
-    alert("تم تفعيل تنبيه السعر بنجاح لهذا الأصل!");
-}
-
-function exportReport() {
-    const container = document.getElementById('resultContainer');
-    html2canvas(container, {backgroundColor: '#161f30'}).then(canvas => {
-        const link = document.createElement('a');
-        link.download = 'Nagm_Trading_Report.png';
-        link.href = canvas.toDataURL();
-        link.click();
-    });
-}
-
-// كود إرسال الشكاوى والاقتراحات مباشرة عبر الـ API
-document.getElementById('feedbackForm').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const type = document.getElementById('fbType').value;
-    const message = document.getElementById('fbMessage').value;
-    const contact = document.getElementById('fbContact').value;
-    
-    try {
-        const res = await fetch('/api/feedback', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({type, message, contact})
-        });
-        const data = await res.json();
-        if(data.status === 'success') {
-            alert("تم إرسال ملاحظتك أو اقتراحك بنجاح للمطور عبر @Nagm_Trader_Bot!");
-            const modalEl = document.getElementById('supportModal');
-            const modal = bootstrap.Modal.getInstance(modalEl);
-            modal.hide();
-            document.getElementById('feedbackForm').reset();
-        } else {
-            alert("حدث خطأ: " + data.message);
-        }
-    } catch(err) {
-        alert("تعذر الاتصال بالخادم.");
-    }
-});
+    window.onload = () => {
+        renderQuickButtons();
+        loadMarketOverview();
+        loadWatchlist();
+        setInterval(loadMarketOverview, 30000);
+    };
 </script>
-
 </body>
 </html>
 """
@@ -1011,15 +988,13 @@ document.getElementById('feedbackForm').addEventListener('submit', async (e) => 
 @app.route('/')
 def index():
     return render_template_string(
-        MAIN_TEMPLATE,
-        app_name=APP_NAME,
-        author=APP_AUTHOR,
+        MAIN_TEMPLATE, 
+        app_name=APP_NAME, 
+        author=APP_AUTHOR, 
+        license_key=APP_LICENSE_KEY, 
         version=APP_VERSION,
-        license_key=APP_LICENSE_KEY,
         popular_tickers=POPULAR_TICKERS
     )
 
 if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
-    
+    app.run(host='0.0.0.0', port=5000, debug=True)
