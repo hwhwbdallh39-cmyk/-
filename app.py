@@ -4,14 +4,14 @@ import sqlite3
 import yfinance as yf
 import pandas as pd
 import numpy as np
+from datetime import datetime
 from flask import Flask, render_template_string, request, jsonify
 
 APP_AUTHOR = "حقوق الطبع والتطوير محفوظة لـ: عبدالله علي هادي عاتي"
-APP_VERSION = "v8.0.0 (Pro Enterprise Edition)"
-APP_NAME = "منصة التحليل والتداول الذكي"
+APP_VERSION = "v11.0.0 (Global Auto-Refresh Edition)"
+APP_NAME = "منصة التداول والتحليل الذكي العالمي"
 
 app = Flask(__name__)
-
 DB_PATH = "trading_platform.db"
 
 def init_db():
@@ -39,7 +39,18 @@ def init_db():
 init_db()
 
 CACHE = {}
-CACHE_TIMEOUT = 15
+CACHE_TIMEOUT = 10
+
+# قائمة المؤشرات والأسواق العالمية التفاعلية
+GLOBAL_MARKETS = [
+    {"symbol": "^GSPC", "name_ar": "أس آند بي 500", "name_en": "S&P 500"},
+    {"symbol": "^DJI", "name_ar": "داو جونز", "name_en": "Dow Jones"},
+    {"symbol": "^IXIC", "name_ar": "ناسداك", "name_en": "Nasdaq"},
+    {"symbol": "^TASI.SR", "name_ar": "تاسي السعودي", "name_en": "TASI"},
+    {"symbol": "GC=F", "name_ar": "عقود الذهب", "name_en": "Gold Futures"},
+    {"symbol": "SI=F", "name_ar": "عقود الفضة", "name_en": "Silver Futures"},
+    {"symbol": "BZ=F", "name_ar": "نفط برنت", "name_en": "Brent Crude"}
+]
 
 POPULAR_TICKERS = {
     "GOLD": [
@@ -82,24 +93,20 @@ def analyze_market_asset(ticker_symbol, market):
         if df.empty:
             return {"error_ar": "لم يتم العثور على بيانات، تأكد من الرمز.", "error_en": "No data found, check symbol."}
 
-        # حساب المؤشرات الفنية المتقدمة
         df['SMA_20'] = df['Close'].rolling(window=20).mean()
         df['SMA_50'] = df['Close'].rolling(window=50).mean()
         df['SMA_200'] = df['Close'].rolling(window=200).mean()
 
-        # Bollinger Bands
         std_20 = df['Close'].rolling(window=20).std()
         df['BB_Upper'] = df['SMA_20'] + (std_20 * 2)
         df['BB_Lower'] = df['SMA_20'] - (std_20 * 2)
 
-        # RSI
         delta = df['Close'].diff()
         gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
         rs = gain / loss
         df['RSI'] = 100 - (100 / (1 + rs))
 
-        # MACD
         exp1 = df['Close'].ewm(span=12, adjust=False).mean()
         exp2 = df['Close'].ewm(span=26, adjust=False).mean()
         df['MACD'] = exp1 - exp2
@@ -112,8 +119,6 @@ def analyze_market_asset(ticker_symbol, market):
         latest_macd = round(float(df['MACD'].iloc[-1]), 2)
         latest_signal = round(float(df['Signal_Line'].iloc[-1]), 2)
         sma_200 = round(float(df['SMA_200'].iloc[-1]), 2) if not np.isnan(df['SMA_200'].iloc[-1]) else "N/A"
-        bb_upper = round(float(df['BB_Upper'].iloc[-1]), 2)
-        bb_lower = round(float(df['BB_Lower'].iloc[-1]), 2)
 
         currency = "SAR" if market == 'SA' else ("USD" if market == 'US' else "USD/Oz")
         stop_loss = round(latest_price * 0.96, 2)
@@ -134,12 +139,10 @@ def analyze_market_asset(ticker_symbol, market):
             forecast_ar = "تذبذب واستقرار مسار السعر في نطاق عرضي."
             forecast_en = "Price consolidating in a neutral range."
 
-        chart_df = df.tail(40).fillna(0)
-        dates = [d.strftime('%Y-%m-%d') for d in chart_df.index]
+        chart_df = df.tail(30).fillna(0)
+        dates = [d.strftime('%m-%d') for d in chart_df.index]
         prices = [round(p, 2) for p in chart_df['Close'].tolist()]
         sma20 = [round(p, 2) for p in chart_df['SMA_20'].tolist()]
-        bb_u = [round(p, 2) for p in chart_df['BB_Upper'].tolist()]
-        bb_l = [round(p, 2) for p in chart_df['BB_Lower'].tolist()]
 
         result = {
             "symbol": symbol,
@@ -147,13 +150,10 @@ def analyze_market_asset(ticker_symbol, market):
             "price": latest_price,
             "currency": currency,
             "rsi": latest_rsi,
-            "macd": latest_macd,
             "support": support,
             "resistance": resistance,
             "stop_loss": stop_loss,
             "sma_200": sma_200,
-            "bb_upper": bb_upper,
-            "bb_lower": bb_lower,
             "signal_ar": signal_ar,
             "signal_en": signal_en,
             "signal_badge": signal_badge,
@@ -162,8 +162,7 @@ def analyze_market_asset(ticker_symbol, market):
             "chart_dates": dates,
             "chart_prices": prices,
             "chart_sma20": sma20,
-            "chart_bb_upper": bb_u,
-            "chart_bb_lower": bb_l
+            "last_updated": datetime.now().strftime("%H:%M:%S")
         }
 
         CACHE[cache_key] = {'time': now, 'data': result}
@@ -172,17 +171,22 @@ def analyze_market_asset(ticker_symbol, market):
         return {"error_ar": f"حدث خطأ: {str(e)}", "error_en": f"Error: {str(e)}"}
 
 def get_market_overview():
-    tickers = {"S&P 500": "^GSPC", "الذهب": "GC=F", "نفط برنت": "BZ=F", "تاسي": "^TASI"}
     res = []
-    for name, sym in tickers.items():
+    for m in GLOBAL_MARKETS:
         try:
-            t = yf.Ticker(sym)
+            t = yf.Ticker(m["symbol"])
             h = t.history(period="2d")
             if len(h) >= 2:
                 close = h['Close'].iloc[-1]
                 prev = h['Close'].iloc[-2]
                 change = round(((close - prev) / prev) * 100, 2)
-                res.append({"name": name, "price": round(close, 2), "change": change})
+                res.append({
+                    "symbol": m["symbol"],
+                    "name_ar": m["name_ar"],
+                    "name_en": m["name_en"],
+                    "price": round(close, 2),
+                    "change": change
+                })
         except:
             pass
     return res
@@ -192,20 +196,26 @@ MAIN_TEMPLATE = """
 <html lang="ar" dir="rtl" id="htmlTag" data-theme="dark">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <title>{{ app_name }}</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://html2canvas.hertzen.com/dist/html2canvas.min.js"></script>
     <style>
+        :root {
+            --sat: env(safe-area-inset-top);
+            --sab: env(safe-area-inset-bottom);
+        }
         [data-theme="dark"] {
-            --bg-color: #0f172a;
-            --card-bg: #1e293b;
-            --border-color: #334155;
-            --text-main: #f8fafc;
+            --bg-color: #090d16;
+            --card-bg: #161f30;
+            --border-color: #243049;
+            --text-main: #f1f5f9;
             --text-muted: #94a3b8;
             --accent-color: #38bdf8;
-            --box-bg: #0f172a;
+            --box-bg: #0d1424;
         }
         [data-theme="light"] {
             --bg-color: #f8fafc;
@@ -216,180 +226,227 @@ MAIN_TEMPLATE = """
             --accent-color: #0284c7;
             --box-bg: #f1f5f9;
         }
-        body { background-color: var(--bg-color); color: var(--text-main); font-family: system-ui, -apple-system, sans-serif; transition: all 0.3s ease; }
-        .card-panel { background-color: var(--card-bg); border: 1px solid var(--border-color); border-radius: 12px; }
+        * {
+            -webkit-tap-highlight-color: transparent;
+            user-select: none;
+        }
+        input, select, textarea {
+            user-select: text !important;
+        }
+        body { 
+            background-color: var(--bg-color); 
+            color: var(--text-main); 
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; 
+            padding-top: var(--sat);
+            padding-bottom: calc(75px + var(--sab)); 
+            touch-action: manipulation;
+        }
+        .card-panel { background-color: var(--card-bg); border: 1px solid var(--border-color); border-radius: 16px; }
         .text-accent { color: var(--accent-color); }
-        .btn-main { background-color: var(--accent-color); color: #fff; border: none; font-weight: 600; }
-        .box-info { background-color: var(--box-bg); border: 1px solid var(--border-color); border-radius: 8px; padding: 12px; }
-        .status-badge { font-size: 1.1rem; padding: 6px 16px; border-radius: 20px; display: inline-block; font-weight: bold; }
+        .btn-main { background-color: var(--accent-color); color: #fff; border: none; font-weight: 600; min-height: 50px; font-size: 1.05rem; border-radius: 12px; }
+        .box-info { background-color: var(--box-bg); border: 1px solid var(--border-color); border-radius: 12px; padding: 12px; }
+        .status-badge { font-size: 1.05rem; padding: 8px 22px; border-radius: 30px; display: inline-block; font-weight: bold; }
         .badge-buy { background-color: #10b981; color: #fff; }
         .badge-sell { background-color: #ef4444; color: #fff; }
         .badge-hold { background-color: #f59e0b; color: #fff; }
-        .ticker-wrap { overflow: hidden; white-space: nowrap; background: var(--card-bg); border-bottom: 1px solid var(--border-color); }
-        .ticker { display: inline-block; animation: ticker 25s linear infinite; }
+        
+        .ticker-wrap { overflow: hidden; white-space: nowrap; background: var(--card-bg); border-bottom: 1px solid var(--border-color); font-size: 0.85rem; }
+        .ticker { display: inline-block; animation: ticker 30s linear infinite; }
         @keyframes ticker { 0% { transform: translate3d(0, 0, 0); } 100% { transform: translate3d(-50%, 0, 0); } }
+
+        .mobile-nav {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background-color: var(--card-bg);
+            border-top: 1px solid var(--border-color);
+            display: flex;
+            justify-content: space-around;
+            padding-top: 8px;
+            padding-bottom: calc(8px + var(--sab));
+            z-index: 1000;
+            backdrop-filter: blur(10px);
+        }
+        .mobile-nav button {
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            font-size: 0.75rem;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 2px;
+        }
+        .mobile-nav button.active { color: var(--accent-color); font-weight: bold; }
+        .btn-touch { min-height: 44px; border-radius: 10px; }
+        .form-control, .form-select { min-height: 48px; font-size: 1rem; border-radius: 10px; }
+        
+        .pulse-dot {
+            height: 8px;
+            width: 8px;
+            background-color: #10b981;
+            border-radius: 50%;
+            display: inline-block;
+            box-shadow: 0 0 0 rgba(16, 185, 129, 0.4);
+            animation: pulse 1.5s infinite;
+        }
+        @keyframes pulse {
+            0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); }
+            70% { box-shadow: 0 0 0 6px rgba(16, 185, 129, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+        }
     </style>
 </head>
 <body>
 
-<!-- شريط أسعار الماركت المتحرك -->
-<div class="ticker-wrap py-2 px-3 small">
-    <div class="ticker" id="marketTicker">جاري تحصيل بيانات المؤشرات...</div>
+<div class="ticker-wrap py-2 px-2">
+    <div class="ticker" id="marketTicker">جاري الاتصال بالأسواق العالمية...</div>
 </div>
 
-<div class="container py-4" style="max-width: 900px;">
-    <!-- خيارات الصفحة -->
+<div class="container py-3 px-3" style="max-width: 600px;">
+    <!-- الهيدر -->
     <div class="d-flex justify-content-between align-items-center mb-3">
         <div>
-            <button id="langToggleBtn" onclick="toggleLanguage()" class="btn btn-outline-secondary btn-sm">English</button>
-            <button onclick="toggleTheme()" class="btn btn-outline-secondary btn-sm ms-1" id="themeBtn">☀️/🌙</button>
+            <h4 class="fw-bold text-accent m-0" id="appTitle">{{ app_name }}</h4>
+            <span class="small text-secondary"><span class="pulse-dot me-1"></span> تحديث مباشر للأسواق</span>
         </div>
-        <span class="text-secondary small" id="lblAutoRefresh">● تحديث آلي ومباشر</span>
+        <button onclick="toggleTheme()" class="btn btn-sm btn-outline-secondary btn-touch px-3" id="themeBtn">🌙/☀️</button>
     </div>
 
-    <!-- الهيدر -->
-    <div class="text-center mb-4">
-        <h2 class="fw-bold text-accent mb-1" id="appTitle">{{ app_name }}</h2>
-        <p class="text-secondary small" id="appSubTitle">تحليل فني احترافي، تنبيهات أسعار، وربط دائم بالبيانات</p>
-    </div>
-
-    <!-- قائمة المفضلة من السيرفر -->
+    <!-- المفضلة -->
     <div class="card-panel p-3 mb-3">
         <div class="d-flex justify-content-between align-items-center mb-2">
-            <span class="small text-secondary fw-bold" id="lblWatchlist">⭐ المفضلة (SQLite DB):</span>
-            <button onclick="addCurrentToWatchlist()" class="btn btn-sm btn-outline-info" id="btnAddFav">+ إضافة للمفضلة</button>
+            <span class="small text-secondary fw-bold">⭐ المفضلة (Watchlist):</span>
+            <button onclick="addCurrentToWatchlist()" class="btn btn-sm btn-outline-info" id="btnAddFav">+ إضافة</button>
         </div>
         <div id="watchlistContainer" class="d-flex flex-wrap gap-2"></div>
     </div>
 
-    <!-- بطاقة البحث والتحديد -->
-    <div class="card-panel p-4 mb-4">
+    <!-- البحث والتحديد -->
+    <div class="card-panel p-3 mb-3">
         <form id="searchForm">
-            <div class="row g-3">
-                <div class="col-md-5">
-                    <label class="form-label text-secondary small" id="lblMarket">السوق / الأصل</label>
-                    <select id="marketSelect" class="form-select bg-dark text-light border-secondary">
-                        <option value="US">السوق الأمريكي</option>
-                        <option value="SA">السوق السعودي</option>
-                        <option value="GOLD">سوق الذهب والفضة</option>
-                    </select>
-                </div>
-                <div class="col-md-7">
-                    <label class="form-label text-secondary small" id="lblSymbol">الرمز</label>
-                    <input type="text" id="tickerInput" class="form-control bg-dark text-light border-secondary" placeholder="AAPL, 2222, GC=F" required>
-                </div>
+            <div class="mb-2">
+                <label class="form-label text-secondary small mb-1" id="lblMarket">اختر السوق</label>
+                <select id="marketSelect" class="form-select bg-dark text-light border-secondary">
+                    <option value="US">السوق الأمريكي (US)</option>
+                    <option value="SA">السوق السعودي (TASI)</option>
+                    <option value="GOLD">الذهب والفضة (Gold/Silver)</option>
+                </select>
             </div>
 
-            <div class="mt-3">
-                <div id="quickSelectButtons" class="d-flex flex-wrap gap-2"></div>
+            <div class="mb-3">
+                <label class="form-label text-secondary small mb-1" id="lblSymbol">رمز السهم / الأصل</label>
+                <input type="text" id="tickerInput" class="form-control bg-dark text-light border-secondary" placeholder="AAPL أو 2222 أو GC=F" required>
             </div>
 
-            <div class="d-flex gap-2 mt-3">
-                <button type="submit" class="btn btn-main flex-grow-1 py-2" id="btnAnalyze">تحليل الآن</button>
-                <button type="button" onclick="fetchAnalysis()" class="btn btn-outline-secondary py-2">🔄</button>
+            <div class="mb-3">
+                <div id="quickSelectButtons" class="d-flex flex-wrap gap-1"></div>
             </div>
+
+            <button type="submit" class="btn btn-main w-100 py-2" id="btnAnalyze">تحليل مباشر 🚀</button>
         </form>
     </div>
 
-    <!-- لوحة النتائج التفاعلية -->
-    <div id="resultContainer" class="card-panel p-4 mb-4" style="display:none;">
-        <div class="d-flex justify-content-between align-items-center pb-3 border-bottom border-secondary">
+    <!-- نتائج التحليل -->
+    <div id="resultContainer" class="card-panel p-3 mb-4" style="display:none;">
+        <div class="d-flex justify-content-between align-items-center pb-2 border-bottom border-secondary">
             <div>
-                <h3 id="stockSymbol" class="m-0 text-accent fw-bold"></h3>
+                <h4 id="stockSymbol" class="m-0 text-accent fw-bold"></h4>
+                <span class="text-secondary small">● تحديث آلي (آخر تحديث: <span id="lastUpdated">--</span>)</span>
             </div>
             <div class="text-end">
-                <h3 id="stockPrice" class="m-0 fw-bold"></h3>
-                <button onclick="exportReport()" class="btn btn-sm btn-outline-success mt-1">📸 حفظ التقرير كصورة</button>
+                <h4 id="stockPrice" class="m-0 fw-bold"></h4>
+                <button onclick="exportReport()" class="btn btn-sm btn-outline-success mt-1 py-0" style="font-size: 0.75rem;">📸 حفظ كصورة</button>
             </div>
         </div>
 
-        <div class="text-center my-4">
-            <div class="small text-secondary mb-1" id="lblSignalHeader">الإشارة الحالية:</div>
+        <div class="text-center my-3">
             <span id="tradeSignal" class="status-badge"></span>
         </div>
 
-        <!-- التوقعات -->
         <div class="box-info mb-3">
-            <div class="text-accent fw-bold mb-1" id="lblForecastHeader">الاتجاه والتوقعات:</div>
+            <div class="text-accent fw-bold small mb-1">الاتجاه المتوقع:</div>
             <div id="forecastText" class="small"></div>
         </div>
 
-        <!-- الرسم البياني التفاعلي مع Bollinger Bands -->
-        <div class="box-info mb-4">
-            <canvas id="priceChart" height="150"></canvas>
+        <div class="box-info mb-3">
+            <canvas id="priceChart" height="200"></canvas>
         </div>
 
-        <!-- أرقام الدعم والمقاومة والمؤشرات -->
-        <div class="row text-center g-2 mb-4">
-            <div class="col-6 col-md-3">
+        <div class="row text-center g-2 mb-3">
+            <div class="col-6">
                 <div class="box-info">
-                    <span class="text-secondary d-block small" id="lblSupport">الدعم</span>
-                    <strong id="supportVal"></strong>
+                    <span class="text-secondary d-block small">مستوى الدعم</span>
+                    <strong id="supportVal" class="text-light"></strong>
                 </div>
             </div>
-            <div class="col-6 col-md-3">
+            <div class="col-6">
                 <div class="box-info">
-                    <span class="text-secondary d-block small" id="lblResistance">المقاومة</span>
-                    <strong id="resistanceVal"></strong>
+                    <span class="text-secondary d-block small">مستوى المقاومة</span>
+                    <strong id="resistanceVal" class="text-light"></strong>
                 </div>
             </div>
-            <div class="col-6 col-md-3">
+            <div class="col-6">
                 <div class="box-info">
                     <span class="text-secondary d-block small">SMA 200</span>
-                    <strong id="sma200Val"></strong>
+                    <strong id="sma200Val" class="text-light"></strong>
                 </div>
             </div>
-            <div class="col-6 col-md-3">
+            <div class="col-6">
                 <div class="box-info">
                     <span class="text-secondary d-block small">RSI</span>
-                    <strong id="rsiVal"></strong>
+                    <strong id="rsiVal" class="text-light"></strong>
                 </div>
             </div>
         </div>
 
-        <!-- نظام تنبيهات الأسعار -->
         <div class="box-info mb-3">
-            <h6 class="text-accent fw-bold mb-2">🔔 تنبيه سعر مخصص (Price Alert):</h6>
+            <h6 class="text-accent fw-bold small mb-2">🔔 ضبط تنبيه سعر:</h6>
             <div class="row g-2">
-                <div class="col-md-5">
-                    <input type="number" step="0.01" id="alertPriceInput" class="form-control form-control-sm bg-dark text-light border-secondary" placeholder="ادخل السعر المستهدف">
+                <div class="col-7">
+                    <input type="number" step="0.01" id="alertPriceInput" class="form-control form-control-sm bg-dark text-light border-secondary" placeholder="السعر">
                 </div>
-                <div class="col-md-4">
-                    <select id="alertCondition" class="form-select form-select-sm bg-dark text-light border-secondary">
-                        <option value="ABOVE">إذا ارتفع أعلى من السعر</option>
-                        <option value="BELOW">إذا انخفض أقل من السعر</option>
-                    </select>
-                </div>
-                <div class="col-md-3">
-                    <button onclick="setPriceAlert()" class="btn btn-sm btn-info w-100">تفعيل التنبيه</button>
+                <div class="col-5">
+                    <button onclick="setPriceAlert()" class="btn btn-sm btn-info w-100 btn-touch">تفعيل</button>
                 </div>
             </div>
-            <div id="activeAlertsList" class="mt-2 small text-secondary"></div>
         </div>
 
-        <!-- حاسبة إدارة المخاطر -->
         <div class="box-info">
-            <h6 class="text-accent fw-bold mb-2" id="lblRiskCalc">📊 حاسبة إدارة المخاطر ووقف الخسارة:</h6>
+            <h6 class="text-accent fw-bold small mb-2">📊 وقف الخسارة وإدارة السيولة:</h6>
             <div class="row g-2 align-items-center">
-                <div class="col-md-6">
-                    <label class="form-label text-secondary small m-0" id="lblCapital">رأس المال المخصص للصفقة:</label>
-                    <input type="number" id="capitalInput" class="form-control form-control-sm bg-dark text-light border-secondary mt-1" value="10000" oninput="calculateRisk()">
+                <div class="col-12 mb-1">
+                    <input type="number" id="capitalInput" class="form-control form-control-sm bg-dark text-light border-secondary" value="10000" oninput="calculateRisk()" placeholder="رأس المال">
                 </div>
-                <div class="col-md-6">
-                    <div class="small">
-                        <div><span id="lblStopLoss">وقف الخسارة المقترح (4%):</span> <strong id="stopLossVal" class="text-danger"></strong></div>
-                        <div><span id="lblShares">عدد الأسهم/الوحدات:</span> <strong id="sharesVal" class="text-info"></strong></div>
-                    </div>
+                <div class="col-6 small">
+                    وقف الخسارة: <strong id="stopLossVal" class="text-danger"></strong>
+                </div>
+                <div class="col-6 small text-end">
+                    الكمية: <strong id="sharesVal" class="text-info"></strong>
                 </div>
             </div>
         </div>
     </div>
+</div>
 
-    <!-- الفوتر -->
-    <div class="text-center mt-4 text-secondary small">
-        <p class="m-0">{{ author }}</p>
-        <span>{{ version }}</span>
-    </div>
+<div class="mobile-nav">
+    <button onclick="window.scrollTo({top: 0, behavior: 'smooth'});" class="active">
+        <span>🔍</span>
+        <span>بحث</span>
+    </button>
+    <button onclick="document.getElementById('resultContainer').scrollIntoView({behavior: 'smooth'});">
+        <span>📈</span>
+        <span>التحليل</span>
+    </button>
+    <button onclick="fetchWatchlist();">
+        <span>⭐</span>
+        <span>المفضلة</span>
+    </button>
+    <button onclick="toggleLanguage();">
+        <span>🌐</span>
+        <span id="navLang">EN</span>
+    </button>
 </div>
 
 <script>
@@ -405,18 +462,32 @@ function toggleTheme() {
     html.setAttribute('data-theme', theme);
 }
 
-async function loadMarketOverview() {
-    const res = await fetch('/api/market_overview');
-    const data = await res.json();
-    let text = "";
-    data.forEach(item => {
-        const color = item.change >= 0 ? '#10b981' : '#ef4444';
-        text += `<span class="me-4">${item.name}: <strong>${item.price}</strong> <span style="color:${color}">(${item.change}%)</span></span> `;
-    });
-    document.getElementById('marketTicker').innerHTML = text + text;
+function toggleLanguage() {
+    currentLang = currentLang === 'ar' ? 'en' : 'ar';
+    document.getElementById('htmlTag').dir = currentLang === 'ar' ? 'rtl' : 'ltr';
+    document.getElementById('navLang').innerText = currentLang === 'ar' ? 'EN' : 'عربي';
+    updateQuickButtons();
+    loadMarketOverview();
+    if(currentData) renderResults(currentData);
 }
+
+async function loadMarketOverview() {
+    try {
+        const res = await fetch('/api/market_overview');
+        const data = await res.json();
+        let text = "";
+        data.forEach(item => {
+            const name = currentLang === 'ar' ? item.name_ar : item.name_en;
+            const color = item.change >= 0 ? '#10b981' : '#ef4444';
+            const sign = item.change >= 0 ? '+' : '';
+            text += `<span class="me-4">${name}: <strong>${item.price}</strong> <span style="color:${color}">(${sign}${item.change}%)</span></span> `;
+        });
+        document.getElementById('marketTicker').innerHTML = text + text;
+    } catch(e){}
+}
+
 loadMarketOverview();
-setInterval(loadMarketOverview, 60000);
+setInterval(loadMarketOverview, 10000);
 
 async function fetchWatchlist() {
     const res = await fetch('/api/watchlist');
@@ -425,10 +496,10 @@ async function fetchWatchlist() {
     container.innerHTML = '';
     data.forEach(item => {
         const btn = document.createElement('button');
-        btn.className = 'btn btn-sm btn-dark text-info border-secondary me-1 mb-1';
+        btn.className = 'btn btn-sm btn-dark text-info border-secondary me-1 mb-1 btn-touch';
         btn.innerText = `${item.symbol} ✖`;
         btn.onclick = (e) => {
-            if(e.offsetX > btn.offsetWidth - 20) {
+            if(e.offsetX > btn.offsetWidth - 25) {
                 removeFromWatchlist(item.symbol);
             } else {
                 document.getElementById('marketSelect').value = item.market;
@@ -457,38 +528,13 @@ async function removeFromWatchlist(symbol) {
 
 async function setPriceAlert() {
     const price = parseFloat(document.getElementById('alertPriceInput').value);
-    const cond = document.getElementById('alertCondition').value;
     if(!currentData || !price) return;
-
     await fetch('/api/alerts', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({symbol: currentData.symbol, price: price, condition: cond})
+        body: JSON.stringify({symbol: currentData.symbol, price: price, condition: 'ABOVE'})
     });
-    alert('تم إضافة التنبيه بنجاح');
-    checkAlerts();
-}
-
-async function checkAlerts() {
-    if(!currentData) return;
-    const res = await fetch(`/api/alerts?symbol=${currentData.symbol}`);
-    const alerts = await res.json();
-    alerts.forEach(a => {
-        if((a.condition === 'ABOVE' && currentData.price >= a.target_price) || 
-           (a.condition === 'BELOW' && currentData.price <= a.target_price)) {
-            playAlertSound();
-            alert(`🚨 تنبيه سعر! السهم ${a.symbol} وصل إلى السعر المستهدف ${a.target_price}`);
-        }
-    });
-}
-
-function playAlertSound() {
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    const osc = ctx.createOscillator();
-    osc.frequency.setValueAtTime(1000, ctx.currentTime);
-    osc.connect(ctx.destination);
-    osc.start();
-    osc.stop(ctx.currentTime + 0.5);
+    alert('تم تفعيل التنبيه');
 }
 
 async function fetchAnalysis() {
@@ -506,33 +552,33 @@ async function fetchAnalysis() {
 
     currentData = data;
     renderResults(data);
-    checkAlerts();
 
     if(autoRefreshTimer) clearInterval(autoRefreshTimer);
-    autoRefreshTimer = setInterval(fetchAnalysis, 15000);
+    autoRefreshTimer = setInterval(fetchAnalysis, 10000);
 }
 
 function renderResults(data) {
     document.getElementById('stockSymbol').innerText = data.symbol;
     document.getElementById('stockPrice').innerText = `${data.price} ${data.currency}`;
+    document.getElementById('lastUpdated').innerText = data.last_updated;
     
     const signalElem = document.getElementById('tradeSignal');
     signalElem.innerText = currentLang === 'ar' ? data.signal_ar : data.signal_en;
     signalElem.className = "status-badge badge-" + data.signal_badge;
 
     document.getElementById('forecastText').innerText = currentLang === 'ar' ? data.forecast_ar : data.forecast_en;
-    document.getElementById('supportVal').innerText = `${data.support} ${data.currency}`;
-    document.getElementById('resistanceVal').innerText = `${data.resistance} ${data.currency}`;
+    document.getElementById('supportVal').innerText = `${data.support}`;
+    document.getElementById('resistanceVal').innerText = `${data.resistance}`;
     document.getElementById('sma200Val').innerText = data.sma_200;
     document.getElementById('rsiVal').innerText = data.rsi;
 
     calculateRisk();
-    renderChart(data.chart_dates, data.chart_prices, data.chart_sma20, data.chart_bb_upper, data.chart_bb_lower);
+    renderChart(data.chart_dates, data.chart_prices, data.chart_sma20);
 
     document.getElementById('resultContainer').style.display = 'block';
 }
 
-function renderChart(dates, prices, sma, bbUpper, bbLower) {
+function renderChart(dates, prices, sma) {
     const ctx = document.getElementById('priceChart').getContext('2d');
     if(chartInstance) chartInstance.destroy();
 
@@ -541,18 +587,17 @@ function renderChart(dates, prices, sma, bbUpper, bbLower) {
         data: {
             labels: dates,
             datasets: [
-                { label: 'السعر (Price)', data: prices, borderColor: '#38bdf8', borderWidth: 2, fill: false },
-                { label: 'SMA 20', data: sma, borderColor: '#f59e0b', borderWidth: 1, borderDash: [4, 4], fill: false },
-                { label: 'BB Upper', data: bbUpper, borderColor: 'rgba(239, 68, 68, 0.4)', borderWidth: 1, fill: false },
-                { label: 'BB Lower', data: bbLower, borderColor: 'rgba(16, 185, 129, 0.4)', borderWidth: 1, fill: false }
+                { label: 'السعر', data: prices, borderColor: '#38bdf8', borderWidth: 2, pointRadius: 1 },
+                { label: 'SMA 20', data: sma, borderColor: '#f59e0b', borderWidth: 1, borderDash: [3, 3], pointRadius: 0 }
             ]
         },
         options: {
             responsive: true,
-            plugins: { legend: { labels: { color: '#94a3b8' } } },
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
             scales: {
-                x: { ticks: { color: '#94a3b8' }, grid: { color: '#334155' } },
-                y: { ticks: { color: '#94a3b8' }, grid: { color: '#334155' } }
+                x: { ticks: { color: '#94a3b8', font: { size: 9 } }, grid: { display: false } },
+                y: { ticks: { color: '#94a3b8', font: { size: 9 } }, grid: { color: '#243049' } }
             }
         }
     });
@@ -562,7 +607,7 @@ function calculateRisk() {
     if(!currentData) return;
     const capital = parseFloat(document.getElementById('capitalInput').value) || 0;
     const shares = Math.floor(capital / currentData.price);
-    document.getElementById('stopLossVal').innerText = `${currentData.stop_loss} ${currentData.currency}`;
+    document.getElementById('stopLossVal').innerText = `${currentData.stop_loss}`;
     document.getElementById('sharesVal').innerText = shares > 0 ? shares : 0;
 }
 
@@ -583,7 +628,7 @@ function updateQuickButtons() {
     popularTickers[market].forEach(item => {
         const btn = document.createElement('button');
         btn.type = 'button';
-        btn.className = 'btn btn-outline-secondary btn-sm text-light';
+        btn.className = 'btn btn-outline-secondary btn-sm text-light me-1 mb-1 btn-touch';
         btn.innerText = item.name_ar;
         btn.onclick = () => {
             document.getElementById('tickerInput').value = item.symbol;
